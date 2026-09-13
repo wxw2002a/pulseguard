@@ -5,6 +5,7 @@
 **Real-time transaction risk analytics. Built to explain every signal and survive replay.**
 
 [![verify](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml)
+[![Kubernetes](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml)
 ![Java](https://img.shields.io/badge/Java-17-31594e)
 ![Spark](https://img.shields.io/badge/Apache_Spark-3.5.8-d28557)
 ![License](https://img.shields.io/badge/license-MIT-809b65)
@@ -23,9 +24,9 @@ PulseGuard is an **e-commerce payment event monitoring and investigation system*
 
 The system monitors events after they are received; it does not authorize, block, refund or move money. A payment service integrates by posting its normalized events to the ingestion API with a stable transaction ID. The included generator drives that same interface using synthetic data.
 
-![PulseGuard risk workspace — explicitly labeled synthetic sample data](docs/assets/dashboard.png)
+![PulseGuard live risk workspace connected to the verified Kafka and Spark pipeline](docs/assets/dashboard.png)
 
-*The screenshot uses the dashboard's explicitly labeled Sample data mode. Its figures are illustrative, not benchmark results. Live mode reads the real API and displays connection failures rather than substituting fixtures.*
+*Captured from the [successful Compose run](https://github.com/wxw2002a/pulseguard/actions/runs/34742387094): 129 synthetic transaction events were submitted through the real API, Kafka, Spark and MongoDB stack. The dashboard is in live mode; Sample data is off. [Reports and scope](docs/verification.md) are retained in the repository.*
 
 ## Engineering capabilities
 
@@ -136,6 +137,8 @@ List endpoints return `{"items":[...]}`. Percent-encode alert IDs when placing t
 These are transparent demonstration rules. They are not trained fraud models, real payment controls, or empirically validated loss-prevention policies.
 
 ## Verify the behavior
+
+**Verified:** [57 Java tests with zero skips and a complete Compose recovery run](https://github.com/wxw2002a/pulseguard/actions/runs/34742387094), plus [actual deployment and pipeline checks on Kubernetes](https://github.com/wxw2002a/pulseguard/actions/runs/34742236882). The recovery test stops Kafka, accepts a transaction while the broker is unavailable, and confirms delivery and risk analysis after Kafka returns. Original transaction evidence and review-history preservation are also checked.
 
 ```bash
 ./mvnw -B -ntp verify                         # Java compilation, unit/MVC tests and JARs

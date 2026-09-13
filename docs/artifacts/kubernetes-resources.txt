@@ -1,0 +1,22 @@
+NAME                             READY   STATUS      RESTARTS   AGE   IP            NODE                          NOMINATED NODE   READINESS GATES
+pod/api-564c95d6bb-gxf2q         1/1     Running     0          43s   10.244.0.5    pulseguard-ci-control-plane   <none>           <none>
+pod/kafka-0                      1/1     Running     0          43s   10.244.0.11   pulseguard-ci-control-plane   <none>           <none>
+pod/mongodb-0                    1/1     Running     0          43s   10.244.0.12   pulseguard-ci-control-plane   <none>           <none>
+pod/streaming-6b4f5fc444-p65zb   1/1     Running     0          43s   10.244.0.10   pulseguard-ci-control-plane   <none>           <none>
+pod/topic-init-cb46h             0/1     Completed   0          43s   10.244.0.9    pulseguard-ci-control-plane   <none>           <none>
+
+NAME                                      STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE   VOLUMEMODE
+persistentvolumeclaim/data-kafka-0        Bound    pvc-349283af-ee57-4fe8-8891-55c268a98f45   5Gi        RWO            standard       <unset>                 43s   Filesystem
+persistentvolumeclaim/data-mongodb-0      Bound    pvc-c146b172-308e-4e9f-8dcc-a1208cefec02   5Gi        RWO            standard       <unset>                 43s   Filesystem
+persistentvolumeclaim/spark-checkpoints   Bound    pvc-cfb695a8-128b-47d9-9672-5fa4090c8d77   5Gi        RWO            standard       <unset>                 43s   Filesystem
+
+NAME              TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)             AGE   SELECTOR
+service/api       ClusterIP   10.96.202.37   <none>        8080/TCP            43s   app=api
+service/kafka     ClusterIP   None           <none>        9092/TCP,9093/TCP   43s   app=kafka
+service/mongodb   ClusterIP   None           <none>        27017/TCP           43s   app=mongodb
+
+NAME                                      REFERENCE        TARGETS              MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/api   Deployment/api   cpu: <unknown>/70%   1         2         1          43s
+
+NAME                             MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+poddisruptionbudget.policy/api   1               N/A               0                     43s
