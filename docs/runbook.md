@@ -29,9 +29,11 @@ The second command retains the original IDs and timestamps. Its response count m
 python scripts/e2e.py --with-recovery --timeout 300
 ```
 
-The test creates isolated synthetic accounts, observes all three rules, checks an exact six-event/3,000-minor-unit window, injects a duplicate directly into Kafka, restarts Spark with the same checkpoint, then requires a new alert **and** a fresh window update from the restarted process. It confirms the original duplicate did not change counts or create extra alerts. It writes `artifacts/e2e-report.json`.
+The test creates isolated synthetic accounts, observes all three rules, checks an exact six-event/3,000-minor-unit window, verifies the matching original evidence and saves a reasoned analyst review. It injects duplicate and malformed Kafka records, restarts Spark with the same checkpoint, then requires a new alert **and** a fresh window update from the restarted process. It confirms counts, alert identities, review history and quarantine identities remain correct. Finally, it stops Kafka, accepts a new transaction into the outbox, restarts the broker and waits for delivery and its risk alert. It writes `artifacts/e2e-report.json`.
 
 Ordinary restarts retain checkpoint and projection volumes. Do not erase checkpoints to fix a transient failure. If a schema/query change requires rebuilding state, create new checkpoint directories and a fresh projection database, replay retained data, compare counts and switch readers once the rebuild is complete.
+
+The transaction evidence index relies on the BSON `eventTimeDate` field written by the current ingestion model. Data created before that field was introduced needs an explicit migration or a fresh development database for window evidence queries; the application does not silently backfill older records.
 
 ## Broker outage
 

@@ -4,18 +4,20 @@ info:
   version: 1.0.0
   description: Local transaction ingestion and risk investigation. Lists return bounded recent records, not a complete export.
 servers:
-  - url: http://localhost:8080
+- url: http://localhost:8080
 paths:
   /api/v1/transactions:
     post:
       operationId: acceptTransaction
       summary: Atomically accept an immutable transaction and its outbox entry
-      security: [{ApiKey: []}]
+      security:
+      - ApiKey: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: './transaction.v1.schema.json'}
+            schema:
+              $ref: ./transaction.v1.schema.json
       responses:
         '202':
           description: Accepted, including an identical retry
@@ -23,19 +25,31 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [transactionId, status, duplicate]
+                required:
+                - transactionId
+                - status
+                - duplicate
                 properties:
-                  transactionId: {type: string}
-                  status: {type: string, const: ACCEPTED}
-                  duplicate: {type: boolean}
-        '400': {description: Invalid transaction}
-        '401': {description: Missing or incorrect X-API-Key}
-        '409': {description: Transaction ID already belongs to a different payload}
+                  transactionId:
+                    type: string
+                  status:
+                    type: string
+                    const: ACCEPTED
+                  duplicate:
+                    type: boolean
+        '400':
+          description: Invalid transaction
+        '401':
+          description: Missing or incorrect X-API-Key
+        '409':
+          description: Transaction ID already belongs to a different payload
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
     get:
       operationId: listTransactions
       parameters:
-        - {$ref: '#/components/parameters/Limit'}
-        - {$ref: '#/components/parameters/AccountId'}
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/AccountId'
       responses:
         '200':
           description: Recent transactions, newest ingestion first
@@ -48,17 +62,26 @@ paths:
                     type: array
                     items:
                       allOf:
-                        - {$ref: '#/components/schemas/TransactionView'}
-        '400': {description: Invalid query parameters}
+                      - $ref: '#/components/schemas/TransactionView'
+        '400':
+          description: Invalid query parameters
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
   /api/v1/alerts:
     get:
       operationId: listAlerts
       parameters:
-        - {$ref: '#/components/parameters/Limit'}
-        - {$ref: '#/components/parameters/AccountId'}
-        - name: severity
-          in: query
-          schema: {type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL]}
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/AccountId'
+      - name: severity
+        in: query
+        schema:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
       responses:
         '200':
           description: Recent risk signals
@@ -67,51 +90,84 @@ paths:
               schema:
                 type: object
                 properties:
-                  items: {type: array, items: {$ref: '#/components/schemas/Alert'}}
-        '400': {description: Invalid query parameters}
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Alert'
+        '400':
+          description: Invalid query parameters
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
   /api/v1/alerts/{id}:
     get:
       operationId: getAlert
       parameters:
-        - {$ref: '#/components/parameters/AlertId'}
-        - name: historyLimit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+      - $ref: '#/components/parameters/AlertId'
+      - name: historyLimit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
       responses:
         '200':
           description: Alert detail with bounded recent review history
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AlertDetail'}
-        '404': {description: Unknown alert ID}
+              schema:
+                $ref: '#/components/schemas/AlertDetail'
+        '404':
+          description: Unknown alert ID
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '400':
+          description: Invalid query or path parameter
   /api/v1/alerts/{id}/evidence:
     get:
       operationId: getAlertEvidence
       parameters:
-        - {$ref: '#/components/parameters/AlertId'}
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 200, default: 200}
+      - $ref: '#/components/parameters/AlertId'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 200
       responses:
         '200':
-          description: Matching original transaction or account/currency/event-time-window records
+          description: Original transaction or account/currency records in [windowStart, windowEnd), ascending event time.
+            Empty items when no original record exists.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  items: {type: array, items: {$ref: '#/components/schemas/TransactionView'}}
-        '404': {description: Unknown alert ID}
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TransactionView'
+        '404':
+          description: Unknown alert ID
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '400':
+          description: Invalid query or path parameter
   /api/v1/alerts/{id}/review:
     patch:
       operationId: reviewAlert
-      security: [{ApiKey: []}]
+      security:
+      - ApiKey: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          description: Percent-encoded deterministic alert ID
-          schema: {type: string, minLength: 1, maxLength: 256}
+      - name: id
+        in: path
+        required: true
+        description: Percent-encoded deterministic alert ID
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
       requestBody:
         required: true
         content:
@@ -119,27 +175,51 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [status, note, analyst]
+              required:
+              - status
+              - note
+              - analyst
               properties:
-                status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
-                note: {type: string, minLength: 3, maxLength: 1000}
-                analyst: {type: string, minLength: 2, maxLength: 64, description: Self-reported operator label, not an authenticated identity}
+                status:
+                  type: string
+                  enum:
+                  - OPEN
+                  - INVESTIGATING
+                  - RESOLVED
+                note:
+                  type: string
+                  minLength: 3
+                  maxLength: 1000
+                  description: Minimum length is measured after trimming whitespace.
+                analyst:
+                  type: string
+                  minLength: 2
+                  maxLength: 64
+                  description: Self-reported operator label, not an authenticated identity. Minimum length is measured after
+                    trimming whitespace.
       responses:
         '200':
-          description: Updated alert
+          description: Updated alert with the latest 50 chronological review entries
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AlertDetail'}
-        '400': {description: Invalid review state}
-        '401': {description: Missing or incorrect X-API-Key}
-        '404': {description: Unknown alert ID}
-        '409': {description: Review history has reached its 500-entry limit}
+              schema:
+                $ref: '#/components/schemas/AlertDetail'
+        '400':
+          description: Invalid review state, note, analyst label or alert ID
+        '401':
+          description: Missing or incorrect X-API-Key
+        '404':
+          description: Unknown alert ID
+        '409':
+          description: Review history has reached its 500-entry limit
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
   /api/v1/windows:
     get:
       operationId: listWindows
       parameters:
-        - {$ref: '#/components/parameters/Limit'}
-        - {$ref: '#/components/parameters/AccountId'}
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/AccountId'
       responses:
         '200':
           description: Recent account/currency event-time windows
@@ -148,8 +228,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  items: {type: array, items: {$ref: '#/components/schemas/Window'}}
-        '400': {description: Invalid query parameters}
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Window'
+        '400':
+          description: Invalid query parameters
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
   /api/v1/overview:
     get:
       operationId: overview
@@ -161,88 +247,218 @@ paths:
               schema:
                 type: object
                 properties:
-                  transactions: {type: integer, format: int64}
-                  alerts: {type: integer, format: int64}
-                  highRisk: {type: integer, format: int64, description: Unresolved HIGH or CRITICAL alerts}
-                  volumeByCurrency: {type: object, additionalProperties: {type: integer, format: int64}}
-                  pendingDelivery: {type: integer, format: int64}
-                  reviewedAlerts: {type: integer, format: int64}
+                  transactions:
+                    type: integer
+                    format: int64
+                  alerts:
+                    type: integer
+                    format: int64
+                  highRisk:
+                    type: integer
+                    format: int64
+                    description: Unresolved HIGH or CRITICAL alerts
+                  volumeByCurrency:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                      format: int64
+                  pendingDelivery:
+                    type: integer
+                    format: int64
+                  reviewedAlerts:
+                    type: integer
+                    format: int64
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
 components:
   securitySchemes:
-    ApiKey: {type: apiKey, in: header, name: X-API-Key}
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
   parameters:
     AlertId:
       name: id
       in: path
       required: true
       description: Percent-encoded deterministic alert ID
-      schema: {type: string, minLength: 1, maxLength: 256}
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
     Limit:
       name: limit
       in: query
-      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
     AccountId:
       name: accountId
       in: query
-      schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{1,64}$
   schemas:
     ReviewEntry:
       type: object
       properties:
-        status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
-        note: {type: string}
-        analyst: {type: string}
-        reviewedAt: {type: string, format: date-time}
+        status:
+          type: string
+          enum:
+          - OPEN
+          - INVESTIGATING
+          - RESOLVED
+        note:
+          type: string
+        analyst:
+          type: string
+        reviewedAt:
+          type: string
+          format: date-time
     AlertDetail:
       allOf:
-        - {$ref: '#/components/schemas/Alert'}
-        - type: object
-          properties:
-            reviewHistoryCount: {type: integer}
-            reviewHistory: {type: array, items: {$ref: '#/components/schemas/ReviewEntry'}}
+      - $ref: '#/components/schemas/Alert'
+      - type: object
+        properties:
+          reviewHistoryCount:
+            type: integer
+          reviewHistory:
+            type: array
+            items:
+              $ref: '#/components/schemas/ReviewEntry'
     TransactionView:
       type: object
       properties:
-        schemaVersion: {type: integer}
-        transactionId: {type: string}
-        accountId: {type: string}
-        merchantId: {type: string}
-        amountMinor: {type: integer, format: int64}
-        currency: {type: string}
-        country: {type: string}
-        channel: {type: string}
-        eventTime: {type: string, format: date-time}
-        ingestedAt: {type: string, format: date-time}
-        deliveryStatus: {type: string, enum: [PENDING, IN_FLIGHT, SENT]}
+        schemaVersion:
+          type: integer
+        transactionId:
+          type: string
+        accountId:
+          type: string
+        merchantId:
+          type: string
+        amountMinor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        country:
+          type: string
+        channel:
+          type: string
+        eventTime:
+          type: string
+          format: date-time
+        ingestedAt:
+          type: string
+          format: date-time
+        deliveryStatus:
+          type: string
+          enum:
+          - PENDING
+          - IN_FLIGHT
+          - SENT
     Alert:
       type: object
       properties:
-        id: {type: string}
-        transactionId: {type: string}
-        accountId: {type: string}
-        currency: {type: string}
-        rule: {type: string, enum: [HIGH_VALUE, VELOCITY, CARD_TESTING]}
-        severity: {type: string}
-        score: {type: integer}
-        reasons: {type: array, items: {type: string}}
-        status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
-        amountMinor: {type: integer, format: int64}
-        transactionCount: {type: integer, format: int64}
-        totalAmountMinor: {type: integer, format: int64}
-        eventTime: {type: string, format: date-time}
-        windowStart: {type: string, format: date-time}
-        windowEnd: {type: string, format: date-time}
-        createdAt: {type: string, format: date-time}
-        reviewedAt: {type: string, format: date-time}
+        id:
+          type: string
+        transactionId:
+          type: string
+        accountId:
+          type: string
+        currency:
+          type: string
+        rule:
+          type: string
+          enum:
+          - HIGH_VALUE
+          - VELOCITY
+          - CARD_TESTING
+        severity:
+          type: string
+        score:
+          type: integer
+        reasons:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum:
+          - OPEN
+          - INVESTIGATING
+          - RESOLVED
+        amountMinor:
+          type: integer
+          format: int64
+        transactionCount:
+          type: integer
+          format: int64
+        totalAmountMinor:
+          type: integer
+          format: int64
+        eventTime:
+          type: string
+          format: date-time
+        windowStart:
+          type: string
+          format: date-time
+        windowEnd:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
     Window:
       type: object
       properties:
-        id: {type: string}
-        accountId: {type: string}
-        currency: {type: string}
-        windowStart: {type: string, format: date-time}
-        windowEnd: {type: string, format: date-time}
-        transactionCount: {type: integer, format: int64}
-        totalAmountMinor: {type: integer, format: int64}
-        highValueCount: {type: integer, format: int64}
-        updatedAt: {type: string, format: date-time}
+        id:
+          type: string
+        accountId:
+          type: string
+        currency:
+          type: string
+        windowStart:
+          type: string
+          format: date-time
+        windowEnd:
+          type: string
+          format: date-time
+        transactionCount:
+          type: integer
+          format: int64
+        totalAmountMinor:
+          type: integer
+          format: int64
+        highValueCount:
+          type: integer
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+  responses:
+    StorageUnavailable:
+      description: Storage is temporarily unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'

@@ -9,7 +9,7 @@
 ![Spark](https://img.shields.io/badge/Apache_Spark-3.5.8-d28557)
 ![License](https://img.shields.io/badge/license-MIT-809b65)
 
-[Architecture](docs/architecture.md) · [Runbook](docs/runbook.md) · [API contract](contracts/openapi.yaml) · [Verification](docs/verification.md)
+[Architecture](docs/architecture.md) · [Integration](docs/integration.md) · [Runbook](docs/runbook.md) · [API contract](contracts/openapi.yaml) · [Verification](docs/verification.md)
 
 </div>
 

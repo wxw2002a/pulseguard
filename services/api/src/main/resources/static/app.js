@@ -372,7 +372,7 @@ async function openAlert(id) {
         ]);
     if (state.selected !== id) return;
     $("#detail-evidence").innerHTML = evidence.items?.length
-      ? `<div class="evidence-list">${evidence.items.map((t) => `<div><span class="mono">${escapeHtml(t.transactionId)}</span><strong>${escapeHtml(money(t.amountMinor, t.currency))} ${escapeHtml(t.currency)}</strong><small>${escapeHtml(time(t.eventTime))} · ${escapeHtml(t.merchantId)}</small></div>`).join("")}</div><p class="dialog-hint">${state.sample ? "Illustrative account records." : "Up to 200 original transactions matching this signal; newest event time first."}</p>`
+      ? `<div class="evidence-list">${evidence.items.map((t) => `<div><span class="mono">${escapeHtml(t.transactionId)}</span><strong>${escapeHtml(money(t.amountMinor, t.currency))} ${escapeHtml(t.currency)}</strong><small>${escapeHtml(time(t.eventTime))} · ${escapeHtml(t.merchantId)}</small></div>`).join("")}</div><p class="dialog-hint">${state.sample ? "Illustrative account records." : "Up to 200 original transactions matching this signal; earliest event time first."}</p>`
       : '<p class="dialog-hint">No ingested transaction evidence found. Records published directly to Kafka may not have an API ledger entry.</p>';
     $("#detail-history").innerHTML = detail.reviewHistory?.length
       ? `<ol class="review-history">${[...detail.reviewHistory]

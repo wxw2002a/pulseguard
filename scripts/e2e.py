@@ -128,7 +128,9 @@ def main():
 
         def dead_letters():
             # Pass JavaScript as one argv value, never through a shell.
-            query = "JSON.stringify(db.dead_letters.find({payloadExcerpt:" + json.dumps(malformed) + "}).toArray())"
+            query = ("JSON.stringify(db.dead_letters.find({payloadExcerpt:" + json.dumps(malformed)
+                     + "}).toArray().map(doc => ({_id:doc._id,topic:doc.topic,"
+                       "partition:String(doc.partition),offset:String(doc.offset),reason:doc.reason})))")
             result = subprocess.run(["docker", "compose", "exec", "-T", "mongodb", "mongosh", "--quiet",
                                      "mongodb://localhost:27017/pulseguard", "--eval", query],
                                     capture_output=True, text=True, check=True, cwd=root, timeout=30)
@@ -138,8 +140,10 @@ def main():
         require(len(poisoned) == 1, "one dead letter for the malformed source record")
         dead_letter = poisoned[0]
         expected_id = f"{dead_letter['topic']}:{dead_letter['partition']}:{dead_letter['offset']}"
-        require(dead_letter["_id"] == expected_id and dead_letter["reason"] == "malformed JSON",
-                "dead-letter identity is deterministic from Kafka coordinates")
+        require(dead_letter["_id"] == expected_id,
+                f"dead-letter identity matches Kafka coordinates: {dead_letter['_id']} == {expected_id}")
+        require(dead_letter["reason"] == "malformed JSON",
+                f"dead-letter classifies malformed JSON: {dead_letter['reason']}")
         subprocess.run(["docker", "compose", "restart", "streaming"], check=True, cwd=root, timeout=120)
         # A new event is the proof that the restarted processor actually resumed.
         fresh = {**events[-1], "transactionId": f"e2e-{run}-after-restart"}
