@@ -1,0 +1,6 @@
+NAME                      IMAGE                        COMMAND                  SERVICE      CREATED         STATUS                          PORTS
+pulseguard-api-1          pulseguard-api:local         "java -XX:MaxRAMPerc…"   api          2 minutes ago   Up About a minute (healthy)     127.0.0.1:8080->8080/tcp
+pulseguard-kafka-1        apache/kafka:3.9.1           "/__cacert_entrypoin…"   kafka        2 minutes ago   Up About a minute (healthy)     127.0.0.1:9092->9092/tcp
+pulseguard-mongodb-1      mongo:7.0.30                 "docker-entrypoint.s…"   mongodb      2 minutes ago   Up 2 minutes (healthy)          27017/tcp
+pulseguard-streaming-1    pulseguard-streaming:local   "/opt/entrypoint.sh …"   streaming    2 minutes ago   Up About a minute               127.0.0.1:4040->4040/tcp
+pulseguard-topic-init-1   apache/kafka:3.9.1           "/bin/bash -ec '/opt…"   topic-init   2 minutes ago   Exited (0) About a minute ago   

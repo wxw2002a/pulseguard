@@ -1,0 +1,19 @@
+{
+  "commit": "7376d10c3360a690efec2298a2724b0b0165d53a",
+  "workflowRun": "https://github.com/wxw2002a/pulseguard/actions/runs/34743432685",
+  "scope": "Maven Java tests only; external Compose and Kubernetes JVMs are not instrumented",
+  "modules": [
+    {
+      "module": "api",
+      "coveredLines": 222,
+      "missedLines": 39,
+      "lineCoveragePercent": 85.06
+    },
+    {
+      "module": "streaming",
+      "coveredLines": 128,
+      "missedLines": 104,
+      "lineCoveragePercent": 55.17
+    }
+  ]
+}

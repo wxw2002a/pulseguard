@@ -22,7 +22,25 @@ Mockito is used where unit tests need controlled dependencies. The integration a
 
 Every push to `main`, every pull request and manual execution starts the `verify` workflow. Five jobs run independently: contracts, dashboard, Java, Compose pipeline and Kubernetes. The Kubernetes workflow is reusable and also supports a standalone manual run.
 
+```mermaid
+flowchart LR
+  Change[Pull request / main push] --> Contracts[OpenAPI + JSON Schema]
+  Change --> Browser[Playwright]
+  Change --> Java[JUnit + Testcontainers + Spark + JaCoCo]
+  Change --> Compose[Compose recovery + k6]
+  Change --> Cluster[kind Kubernetes]
+  Contracts --> Gate[Quality gate + consolidated report]
+  Browser --> Gate
+  Java --> Gate
+  Compose --> Gate
+  Cluster --> Gate
+  Gate -->|successful main push| Pages[GitHub Pages]
+  Pages --> Public[Playwright public URL checks]
+```
+
 The final **Quality gate** downloads the current run's artifacts, generates an English Markdown report and requires all five jobs to succeed. A failed, cancelled or skipped required job cannot produce a passing gate. Missing required evidence and observed failed tests also fail report validation. Diagnostics upload even when a test fails; temporary Compose resources and the kind cluster are cleaned up in `always()` steps.
+
+The repository's `main` branch requires an up-to-date **Quality gate** status for standard merges, and disables force pushes and branch deletion. Repository administrators retain GitHub's administrative override.
 
 For a successful `main` push, the separate Pages workflow publishes the exact verified source and its captured synthetic results. It then uses Playwright against the actual public URL to check the expected commit, recorded data, original evidence, review history, assets and desktop/mobile layouts. Publication failures and post-deployment browser failures are visible in that workflow. A post-deployment failure reports the problem; it does not automatically roll back a deployment that has already completed.
 

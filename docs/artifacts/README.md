@@ -2,6 +2,8 @@
 
 These files were copied from successful GitHub Actions artifacts, preserving the observed values.
 
+The latest complete automated toolchain, coverage, k6 results and hosted data snapshot are retained separately in **[automation-7376d10](automation-7376d10/README.md)**. The files listed below preserve the earlier baseline runs.
+
 | File | Source |
 |---|---|
 | `java-test-summary.json` | JUnit XML summaries from [verify 34742387094](https://github.com/wxw2002a/pulseguard/actions/runs/34742387094), commit `7554a95` |

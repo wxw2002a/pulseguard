@@ -1,0 +1,21 @@
+{
+  "measuredAt": "2026-09-13T06:45:27.783181+00:00",
+  "scope": "HTTP ingestion acknowledgements, not end-to-end Spark throughput",
+  "runId": "0db3e3ca4c",
+  "seed": 42,
+  "submitted": 120,
+  "acceptedResponses": 120,
+  "duplicateResponses": 0,
+  "statusCounts": {
+    "202": 120
+  },
+  "elapsedSeconds": 5.956,
+  "acceptedResponsesPerSecond": 20.15,
+  "requestLatencyMs": {
+    "p50": 6.23,
+    "p95": 18.89,
+    "p99": 44.13,
+    "max": 48.95
+  },
+  "failures": []
+}

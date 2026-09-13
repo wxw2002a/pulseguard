@@ -37,6 +37,8 @@ The capture is a point-in-time result from an eventually consistent system. List
 
 The browser suite checks captured data, source links, evidence and history, escaped operator text, read-only controls, sample isolation, mobile layout and absence of live API requests.
 
+A [verified snapshot and its test reports](artifacts/automation-7376d10/README.md) are also committed in this repository, so that recorded version can be rebuilt after the original Actions artifacts expire.
+
 To inspect an exported artifact locally:
 
 ```bash

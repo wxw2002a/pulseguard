@@ -2,7 +2,19 @@
 
 Observed on **2026-09-13**. All figures below come from retained CI output. The source events are synthetic; Kafka, MongoDB, Spark, the Java API, browser and Kubernetes cluster are real running components.
 
-## Passing runs
+## Complete automated toolchain
+
+The [full verification run](https://github.com/wxw2002a/pulseguard/actions/runs/34743432685) for commit `7376d10c3360a690efec2298a2724b0b0165d53a` passed **contracts, dashboard, Java, Compose/k6, Kubernetes and Quality gate**. Its [consolidated report and raw evidence](artifacts/automation-7376d10/README.md) are retained in the repository.
+
+- JUnit / Mockito / Testcontainers / Spark: **57 passed, zero failures, errors or skips**.
+- JaCoCo line coverage: **222/261 API lines (85.06%)**, **128/232 streaming lines (55.17%)**. These counters measure Maven test JVMs; the separate Compose and Kubernetes processes are not instrumented. Uncovered application code remains included.
+- k6: **601 accepted events** at a configured **20 events/s for 30 seconds**, **6/6 thresholds passed**, zero failed HTTP requests and dropped iterations. Ingestion latency **p95 9.39 ms**, **p99 18.61 ms**. This is a controlled HTTP regression workload, not maximum capacity or end-to-end Spark latency.
+- Real Compose checks passed replay, original evidence, review preservation, malformed-record quarantine, Spark restart and Kafka outage/recovery. The real kind deployment passed its seven-event pipeline scenario.
+- The [Pages publication and public browser workflow](https://github.com/wxw2002a/pulseguard/actions/runs/34743594340) also passed. Its read-only snapshot contains **730 accepted transactions and 49 signals**, with zero pending outbox entries. The captured inputs are synthetic.
+
+The remaining sections document the earlier baseline runs and their original artifacts, which are retained separately.
+
+## Earlier passing runs
 
 | Run | Commit | Observed result |
 |---|---|---|

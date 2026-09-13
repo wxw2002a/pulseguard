@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "runId": "be3ad4a579d3",
+  "completedAt": "2026-09-13T06:45:21.681689+00:00",
+  "elapsedSeconds": 41.879,
+  "acceptedUniqueEvents": 9,
+  "rulesObserved": [
+    "HIGH_VALUE",
+    "VELOCITY",
+    "CARD_TESTING"
+  ],
+  "httpReplayChecked": true,
+  "conflictChecked": true,
+  "checkpointRecoveryChecked": true,
+  "analystReviewPreservedOnReplay": true,
+  "deadLetterIdentityChecked": true,
+  "originalEvidenceChecked": true,
+  "brokerOutageRecoveryChecked": true,
+  "windowTransactionCount": 6,
+  "windowTotalAmountMinor": 3000
+}

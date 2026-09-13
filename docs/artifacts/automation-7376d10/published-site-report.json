@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-13T06:47:38.355Z",
+  "url": "https://wxw2002a.github.io/pulseguard/",
+  "expectedCommit": "7376d10c3360a690efec2298a2724b0b0165d53a",
+  "checks": [
+    "Expected source commit and capture metadata",
+    "Recorded overview totals and read-only controls",
+    "Published alerts, original transaction evidence and preserved review history",
+    "Transaction and window records",
+    "Desktop and mobile layout",
+    "No browser errors, broken assets, API calls or remote mutations"
+  ],
+  "status": "passed",
+  "sourceCommit": "7376d10c3360a690efec2298a2724b0b0165d53a",
+  "capturedAt": "2026-09-13T06:46:29.263Z",
+  "sourceRun": "https://github.com/wxw2002a/pulseguard/actions/runs/34743432685",
+  "transactions": 730,
+  "alerts": 49
+}
