@@ -56,6 +56,9 @@ async function main() {
     // Reload once instrumented so asset failures and API requests are checked
     // for the complete user navigation, not just subsequent interactions.
     page.on("pageerror", (error) => errors.push(error.message));
+    page.on("requestfailed", (request) => {
+      errors.push(`Network failure: ${request.url()} (${request.failure()?.errorText || "unknown"})`);
+    });
     page.on("response", (response) => {
       if (response.status() >= 400)
         errors.push(`HTTP ${response.status()}: ${response.url()}`);

@@ -89,6 +89,7 @@ export default function (data) {
   }
   const valid = check(response, {
     "accepted durably with HTTP 202": (result) => result.status === 202,
+    "acknowledgement confirms acceptance": () => body.status === "ACCEPTED",
     "response identifies the submitted immutable event": () =>
       body.transactionId === transactionId,
     "unique event is not reported as a duplicate": () =>
