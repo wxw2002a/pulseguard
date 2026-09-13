@@ -5,6 +5,8 @@ import static org.awaitility.Awaitility.await;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +20,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.pulseguard.api.config.PulseGuardProperties;
 import io.pulseguard.api.outbox.OutboxPublisher;
 import io.pulseguard.api.outbox.OutboxStore;
+import io.pulseguard.api.investigation.InvestigationService;
 import io.pulseguard.api.transaction.TransactionDocument;
 import io.pulseguard.api.transaction.TransactionPayload;
 import io.pulseguard.api.transaction.TransactionService;
@@ -30,6 +33,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -41,6 +45,7 @@ import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -62,6 +67,7 @@ class IngestionIT {
     @Autowired KafkaTemplate<String, TransactionPayload> kafka;
     @Autowired Clock clock;
     @Autowired MeterRegistry metrics;
+    @Autowired InvestigationService investigations;
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -77,7 +83,10 @@ class IngestionIT {
     }
 
     @BeforeEach
-    void cleanTransactions() { mongo.remove(new Query(), TransactionDocument.class); }
+    void cleanTransactions() {
+        mongo.remove(new Query(), TransactionDocument.class);
+        mongo.remove(new Query(), "alerts");
+    }
 
     @Test
     void httpIngestionPersistsDurableOutboxThenPublishesOriginalContractToKafka() throws Exception {
@@ -151,6 +160,64 @@ class IngestionIT {
         assertThat(store.retry(first, now.plusMillis(2), new RuntimeException("late failure"))).isFalse();
         assertThat(store.markPublished(replacement, now.plusMillis(2))).isTrue();
         assertThat(mongo.findById("lease-1", TransactionDocument.class).outbox().status()).isEqualTo("SENT");
+    }
+
+    @Test
+    void evidenceFindsOnlyOriginalTransactionsForExactAccountCurrencyAndWindow() {
+        Instant start = Instant.now().minusSeconds(180).truncatedTo(ChronoUnit.MINUTES);
+        Instant end = start.plusSeconds(60);
+        service.accept(evidencePayload("at-start", "acct-evidence", TransactionPayload.Currency.CAD, start));
+        service.accept(evidencePayload("last-nanosecond", "acct-evidence", TransactionPayload.Currency.CAD, end.minusNanos(1)));
+        service.accept(evidencePayload("before-start", "acct-evidence", TransactionPayload.Currency.CAD, start.minusNanos(1)));
+        service.accept(evidencePayload("at-end", "acct-evidence", TransactionPayload.Currency.CAD, end));
+        service.accept(evidencePayload("wrong-currency", "acct-evidence", TransactionPayload.Currency.USD, start));
+        service.accept(evidencePayload("wrong-account", "other-account", TransactionPayload.Currency.CAD, start));
+        mongo.insert(new Document("_id", "VELOCITY:window").append("accountId", "acct-evidence").append("currency", "CAD")
+                .append("windowStart", Date.from(start)).append("windowEnd", Date.from(end)), "alerts");
+        assertThat(investigations.evidence("VELOCITY:window", 200)).extracting(view -> view.transactionId())
+                .containsExactly("at-start", "last-nanosecond");
+        assertThat(investigations.evidence("VELOCITY:window", 1)).hasSize(1);
+        mongo.insert(new Document("_id", "HIGH_VALUE:at-start").append("transactionId", "at-start"), "alerts");
+        assertThat(investigations.evidence("HIGH_VALUE:at-start", 200)).extracting(view -> view.transactionId()).containsExactly("at-start");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void concurrentReviewsPreserveAllAcceptedNotesAndEnforceCapacityAtomically() {
+        List<Document> originalHistory = new ArrayList<>();
+        for (int index = 0; index < 499; index++) {
+            originalHistory.add(new Document("status", "INVESTIGATING").append("note", "Existing note " + index)
+                    .append("analyst", "initial-analyst").append("reviewedAt", new Date()));
+        }
+        mongo.insert(new Document("_id", "history-cap").append("status", "INVESTIGATING").append("reviewHistory", originalHistory), "alerts");
+        var executor = Executors.newFixedThreadPool(8);
+        try {
+            var attempts = java.util.stream.IntStream.range(0, 8).mapToObj(index -> CompletableFuture.supplyAsync(() -> {
+                try {
+                    investigations.review("history-cap", InvestigationService.ReviewStatus.RESOLVED, "Concurrent note " + index, "analyst-" + index);
+                    return 200;
+                } catch (ResponseStatusException exception) {
+                    return exception.getStatusCode().value();
+                }
+            }, executor)).toList();
+            var statuses = attempts.stream().map(CompletableFuture::join).toList();
+            assertThat(statuses.stream().filter(status -> status == 200).count()).isEqualTo(1);
+            assertThat(statuses.stream().filter(status -> status == 409).count()).isEqualTo(7);
+        } finally {
+            executor.shutdownNow();
+        }
+        var detail = investigations.detail("history-cap", 500);
+        assertThat(detail.get("reviewHistoryCount")).isEqualTo(500);
+        List<Map<String, Object>> history = (List<Map<String, Object>>) detail.get("reviewHistory");
+        assertThat(history).hasSize(500);
+        assertThat(history.get(0).get("note")).isEqualTo("Existing note 0");
+        assertThat(history.get(499).get("note").toString()).startsWith("Concurrent note ");
+        assertThat((List<?>) investigations.detail("history-cap", 50).get("reviewHistory")).hasSize(50);
+        assertThat(investigations.alerts(50, null, null).get(0)).doesNotContainKey("reviewHistory");
+    }
+
+    private TransactionPayload evidencePayload(String id, String account, TransactionPayload.Currency currency, Instant eventTime) {
+        return new TransactionPayload(1, id, account, "merchant-evidence", 600000L, currency, "CA", TransactionPayload.Channel.WEB, eventTime);
     }
 
     private OutboxPublisher publisher() {

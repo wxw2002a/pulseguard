@@ -69,6 +69,39 @@ paths:
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Alert'}}
         '400': {description: Invalid query parameters}
+  /api/v1/alerts/{id}:
+    get:
+      operationId: getAlert
+      parameters:
+        - {$ref: '#/components/parameters/AlertId'}
+        - name: historyLimit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+      responses:
+        '200':
+          description: Alert detail with bounded recent review history
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AlertDetail'}
+        '404': {description: Unknown alert ID}
+  /api/v1/alerts/{id}/evidence:
+    get:
+      operationId: getAlertEvidence
+      parameters:
+        - {$ref: '#/components/parameters/AlertId'}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 200}
+      responses:
+        '200':
+          description: Matching original transaction or account/currency/event-time-window records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/TransactionView'}}
+        '404': {description: Unknown alert ID}
   /api/v1/alerts/{id}/review:
     patch:
       operationId: reviewAlert
@@ -86,18 +119,21 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [status]
+              required: [status, note, analyst]
               properties:
                 status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
+                note: {type: string, minLength: 3, maxLength: 1000}
+                analyst: {type: string, minLength: 2, maxLength: 64, description: Self-reported operator label, not an authenticated identity}
       responses:
         '200':
           description: Updated alert
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Alert'}
+              schema: {$ref: '#/components/schemas/AlertDetail'}
         '400': {description: Invalid review state}
         '401': {description: Missing or incorrect X-API-Key}
         '404': {description: Unknown alert ID}
+        '409': {description: Review history has reached its 500-entry limit}
   /api/v1/windows:
     get:
       operationId: listWindows
@@ -135,6 +171,12 @@ components:
   securitySchemes:
     ApiKey: {type: apiKey, in: header, name: X-API-Key}
   parameters:
+    AlertId:
+      name: id
+      in: path
+      required: true
+      description: Percent-encoded deterministic alert ID
+      schema: {type: string, minLength: 1, maxLength: 256}
     Limit:
       name: limit
       in: query
@@ -144,6 +186,20 @@ components:
       in: query
       schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
   schemas:
+    ReviewEntry:
+      type: object
+      properties:
+        status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
+        note: {type: string}
+        analyst: {type: string}
+        reviewedAt: {type: string, format: date-time}
+    AlertDetail:
+      allOf:
+        - {$ref: '#/components/schemas/Alert'}
+        - type: object
+          properties:
+            reviewHistoryCount: {type: integer}
+            reviewHistory: {type: array, items: {$ref: '#/components/schemas/ReviewEntry'}}
     TransactionView:
       type: object
       properties:

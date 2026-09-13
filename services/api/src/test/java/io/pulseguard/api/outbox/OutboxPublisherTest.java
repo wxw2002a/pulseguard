@@ -68,7 +68,7 @@ class OutboxPublisherTest {
     private TransactionDocument claimed(int attempts) {
         TransactionPayload payload = new TransactionPayload(1, "tx-1", "acct-1", "merchant", 100L,
                 TransactionPayload.Currency.USD, "US", TransactionPayload.Channel.WEB, now);
-        return new TransactionDocument("tx-1", payload, now,
+        return new TransactionDocument("tx-1", payload, now, now,
                 new TransactionDocument.Outbox("IN_FLIGHT", attempts, now, "owner", now.plusSeconds(30), null, null));
     }
 }

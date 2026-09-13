@@ -59,7 +59,7 @@ class OutboxStoreTest {
     }
 
     private TransactionDocument claimed(String owner, int attempts) {
-        return new TransactionDocument("tx-1", null, now,
+        return new TransactionDocument("tx-1", null, now, now,
                 new TransactionDocument.Outbox("IN_FLIGHT", attempts, now, owner, now.plusSeconds(30), null, null));
     }
 }

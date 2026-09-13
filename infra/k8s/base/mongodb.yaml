@@ -25,7 +25,7 @@ spec:
       containers:
         - name: mongodb
           image: mongo:7.0.30
-          args: [--bind_ip_all]
+          args: [--bind_ip_all, --wiredTigerCacheSizeGB, "0.25"]
           ports:
             - {containerPort: 27017, name: mongodb}
           resources:

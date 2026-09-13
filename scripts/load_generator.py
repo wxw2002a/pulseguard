@@ -3,6 +3,7 @@
 import argparse
 import concurrent.futures
 from datetime import datetime, timezone
+import http.client
 import json
 import math
 import os
@@ -27,7 +28,7 @@ def post_event(base_url, api_key, event):
             return response.status, (time.perf_counter() - started) * 1000, json.load(response)
     except urllib.error.HTTPError as error:
         return error.code, (time.perf_counter() - started) * 1000, error.read().decode()
-    except (urllib.error.URLError, TimeoutError) as error:
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
         return 0, (time.perf_counter() - started) * 1000, str(error)
 
 

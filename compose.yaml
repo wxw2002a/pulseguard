@@ -24,6 +24,7 @@ services:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     volumes:
       - kafka-data:/var/lib/kafka/data
+    mem_limit: 1g
     healthcheck:
       test: [CMD-SHELL, /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list >/dev/null 2>&1]
       interval: 10s
@@ -44,7 +45,8 @@ services:
     restart: "no"
   mongodb:
     image: mongo:7.0.30
-    command: [mongod, --bind_ip_all]
+    command: [mongod, --bind_ip_all, --wiredTigerCacheSizeGB, "0.25"]
+    mem_limit: 768m
     volumes:
       - mongo-data:/data/db
     healthcheck:

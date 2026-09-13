@@ -25,6 +25,7 @@ class TransactionMappingTest {
         Document bson = new Document();
         converter.write(transaction, bson);
         assertThat(bson.get("payload", Document.class).get("eventTime")).isEqualTo(now.toString());
+        assertThat(bson.getDate("eventTimeDate")).isEqualTo(java.util.Date.from(now));
         assertThat(converter.read(TransactionDocument.class, bson).payload()).isEqualTo(transaction.payload());
     }
 

@@ -7,7 +7,7 @@ import org.springframework.data.mongodb.core.mapping.MongoId;
 
 @Document("transactions")
 public record TransactionDocument(@MongoId(FieldType.STRING) String id, TransactionPayload payload, Instant ingestedAt,
-                                  Outbox outbox) {
+                                  Instant eventTimeDate, Outbox outbox) {
     public record Outbox(String status, int attempts, Instant nextAttemptAt, String leaseOwner,
                          Instant leaseUntil, Instant publishedAt, String lastError) {
         public static Outbox pending(Instant now) {
@@ -15,6 +15,6 @@ public record TransactionDocument(@MongoId(FieldType.STRING) String id, Transact
         }
     }
     public static TransactionDocument create(TransactionPayload payload, Instant now) {
-        return new TransactionDocument(payload.transactionId(), payload, now, Outbox.pending(now));
+        return new TransactionDocument(payload.transactionId(), payload, now, payload.eventTime(), Outbox.pending(now));
     }
 }

@@ -32,6 +32,7 @@ spec:
       initContainers:
         - name: wait-for-topic
           image: apache/kafka:3.9.1
+          securityContext: {runAsUser: 1000, runAsGroup: 1000}
           command: [/bin/bash, -ec]
           args:
             - until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic transactions.v1; do sleep 5; done

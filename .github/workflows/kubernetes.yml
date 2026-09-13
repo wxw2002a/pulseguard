@@ -1,0 +1,78 @@
+name: kubernetes-smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: kubernetes-smoke-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kind-development-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INGEST_API_KEY: ci-kubernetes-only-key
+      KIND_EXPERIMENTAL_PROVIDER: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.11
+      - name: Install verified official kind binary
+        run: |
+          curl --fail --location --retry 3 -o kind-linux-amd64 https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          echo 'aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  kind-linux-amd64' | sha256sum --check
+          sudo install -m 0755 kind-linux-amd64 /usr/local/bin/kind
+          kind version
+      - name: Build application images and pull stateful services
+        run: |
+          docker compose build api streaming
+          docker pull apache/kafka:3.9.1
+          docker pull mongo:7.0.30
+      - name: Create one-node Kubernetes cluster and load images
+        run: |
+          kind create cluster --name pulseguard-ci --image kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d --wait 120s
+          kind load docker-image --name pulseguard-ci pulseguard-api:local pulseguard-streaming:local apache/kafka:3.9.1 mongo:7.0.30
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+      - name: Apply Kustomize development resources
+        run: |
+          kubectl apply -f infra/k8s/base/namespace.yaml
+          kubectl -n pulseguard create secret generic pulseguard-secrets --from-literal=ingest-api-key="$INGEST_API_KEY"
+          kubectl apply -k infra/k8s/overlays/dev
+          kubectl -n pulseguard rollout status statefulset/kafka --timeout=300s
+          kubectl -n pulseguard rollout status statefulset/mongodb --timeout=300s
+          kubectl -n pulseguard wait --for=condition=complete job/topic-init --timeout=300s
+          kubectl -n pulseguard rollout status deployment/api --timeout=300s
+          kubectl -n pulseguard rollout status deployment/streaming --timeout=300s
+          kubectl -n pulseguard get pods,pvc,hpa,pdb
+      - name: Exercise real Kubernetes HTTP to Kafka to Spark pipeline
+        run: |
+          mkdir -p artifacts
+          kubectl -n pulseguard port-forward service/api 8080:8080 > artifacts/port-forward.log 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
+          python scripts/e2e.py --timeout 300 --report artifacts/kubernetes-e2e-report.json
+      - name: Capture Kubernetes evidence
+        if: always()
+        run: |
+          mkdir -p artifacts
+          kubectl -n pulseguard get pods,pvc,services,hpa,pdb -o wide > artifacts/kubernetes-resources.txt 2>&1 || true
+          kubectl -n pulseguard get events --sort-by=.metadata.creationTimestamp > artifacts/kubernetes-events.txt 2>&1 || true
+          kubectl -n pulseguard describe pods > artifacts/kubernetes-pods.txt 2>&1 || true
+          for app in api streaming kafka mongodb; do
+            kubectl -n pulseguard logs -l app="$app" --all-containers=true --prefix=true --tail=-1 > "artifacts/$app.log" 2>&1 || true
+          done
+          kubectl -n pulseguard logs job/topic-init > artifacts/topic-init.log 2>&1 || true
+          kind export logs artifacts/kind --name pulseguard-ci || true
+      - name: Upload cluster evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-evidence
+          path: artifacts/
+      - name: Delete ephemeral CI cluster
+        if: always()
+        run: kind delete cluster --name pulseguard-ci

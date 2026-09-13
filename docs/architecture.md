@@ -4,7 +4,7 @@
 
 The API validates version, identity fields, integer money, enums and event time. MongoDB's `_id` is the caller's transaction ID. One insert creates both the immutable payload and embedded outbox state. No broker call is required to establish the accepted record.
 
-A duplicate-key race is resolved by reading the existing payload: an equal payload returns a duplicate acceptance, while a different payload returns 409. `eventTime` is stored as a canonical ISO string through a field-specific converter, because BSON dates truncate nanoseconds and would otherwise break equality on retry. Operational timestamps remain BSON dates for indexed queries.
+A duplicate-key race is resolved by reading the existing payload: an equal payload returns a duplicate acceptance, while a different payload returns 409. `eventTime` is stored as a canonical ISO string through a field-specific converter, because BSON dates truncate nanoseconds and would otherwise break equality on retry. A separate indexed BSON date supports efficient investigation evidence queries without changing the immutable payload. Operational timestamps remain BSON dates for indexed queries.
 
 **ADR 001 — embedded outbox:** a separate outbox collection would require a MongoDB transaction/replica set to achieve the same atomic acceptance property. The embedded document is a deliberate fit for this model. The worker's atomic `findAndModify` claims eligible records with a lease and a unique owner token. A stale worker cannot mark a newer lease as complete.
 
@@ -56,7 +56,11 @@ Sink writes execute per Spark partition using short-lived MongoDB clients and bo
 
 ## 5. API and observability boundaries
 
-GET routes expose a bounded recent list and a dashboard overview; PATCH records review status. Mutation endpoints use an API key. The key is held in browser session storage, not embedded into source, and UI strings derived from API records are escaped. Read APIs are intentionally public within the local demonstration.
+GET routes expose bounded recent lists, a dashboard overview, alert details and related transaction evidence. An event alert links to its transaction ID; a window alert selects the same account/currency and the half-open interval `[windowStart, windowEnd)` using an indexed BSON date. Evidence returns at most 200 records and is not a complete export of a hot window.
+
+PATCH requires a status, decision note and operator label. A single MongoDB update changes the current review and appends a timestamped history entry. An atomic length predicate caps history at 500 entries and returns 409 once full rather than silently truncating it; the detail API defaults to the latest 50 entries, with a bounded configurable history limit. This is a useful local review journal, not a regulated audit subsystem: a shared API key does not verify the self-reported operator's identity, and identical repeated PATCH requests create separate history entries.
+
+Mutation endpoints use an API key. The key is held in browser session storage, not embedded into source, and UI strings derived from API records are escaped. Read APIs are intentionally public within the local development configuration.
 
 Readiness checks MongoDB and Kafka; liveness avoids depending on them to prevent restart storms during dependency outages. A broker outage can therefore make the API unready in Kubernetes even though the underlying acceptance/outbox mechanism can persist events. This is a conservative routing choice; change readiness policy if offline acceptance is part of your SLO. Metrics include accepted/duplicate/conflicting requests, outbox publication and retries, HTTP latency and JVM health. Spark logs query progress, watermark and state metrics; the Spark UI provides execution details. The provided Grafana dashboard primarily covers the API, not a fully instrumented distributed Spark fleet.
 

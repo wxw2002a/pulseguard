@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import java.util.List;
+import java.util.Map;
 import io.pulseguard.api.config.PulseGuardProperties;
 import io.pulseguard.api.investigation.InvestigationService;
 import io.pulseguard.api.transaction.TransactionService;
@@ -90,5 +91,25 @@ class ApiContractTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IGNORED\"}"))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(investigation);
+    }
+
+    @Test
+    void reviewRequiresNoteAndAnalystLabel() throws Exception {
+        mvc.perform(patch("/api/v1/alerts/HIGH_VALUE:tx-1/review").header("X-API-Key", "test-key")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("errors.note").exists())
+                .andExpect(jsonPath("errors.analyst").exists());
+        verifyNoInteractions(investigation);
+    }
+
+    @Test
+    void investigationDetailAndEvidenceHaveBoundedReadContracts() throws Exception {
+        when(investigation.detail("HIGH_VALUE:tx-1", 50)).thenReturn(Map.of("id", "HIGH_VALUE:tx-1", "reviewHistory", List.of(), "reviewHistoryCount", 0));
+        when(investigation.evidence("HIGH_VALUE:tx-1", 200)).thenReturn(List.of());
+        mvc.perform(get("/api/v1/alerts/HIGH_VALUE:tx-1")).andExpect(status().isOk())
+                .andExpect(jsonPath("reviewHistory").isArray()).andExpect(jsonPath("reviewHistoryCount").value(0));
+        mvc.perform(get("/api/v1/alerts/HIGH_VALUE:tx-1/evidence")).andExpect(status().isOk()).andExpect(jsonPath("items").isArray());
+        mvc.perform(get("/api/v1/alerts/HIGH_VALUE:tx-1/evidence?limit=201")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/alerts/HIGH_VALUE:tx-1?historyLimit=501")).andExpect(status().isBadRequest());
     }
 }

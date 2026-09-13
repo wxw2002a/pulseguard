@@ -23,6 +23,8 @@ In another terminal, set `INGEST_API_KEY` to the value you chose and run `python
 
 The base namespace and Kafka advertised hostname are deliberately fixed to `pulseguard`; changing namespaces also requires changing Kafka's advertised hostname and voter address. Keep checkpoint PVCs across ordinary restarts. Never run two copies of a query on one checkpoint directory. Deleting a checkpoint is a rebuild, not a harmless retry: existing absolute window snapshots may temporarily regress while history is replayed. Rebuild into fresh MongoDB collections/database and switch readers once caught up.
 
+The manually triggered GitHub Actions workflow `kubernetes-smoke` builds the images, creates a one-node kind cluster, applies these development manifests, waits for the actual workloads, and executes the HTTP-to-Spark e2e checks. It uploads pod logs, Kubernetes events, and the measured test report. This workflow exercises the single-pod Spark development mode. It does not install metrics-server or test CPU-driven HPA scaling, and does not exercise native distributed Spark below.
+
 ## Native distributed Spark (optional)
 
 `scripts/spark-submit-k8s.sh` uses Spark's actual Kubernetes cluster mode: the driver creates two executor pods using the included `spark-driver` service account. It requires a local **Spark 3.5.8 / Scala 2.12 / Java 17** installation and the streaming image accessible to every node. The Apache entrypoint is preserved in `Dockerfile.streaming` for driver/executor compatibility. Kafka connector jars are already inside the image.

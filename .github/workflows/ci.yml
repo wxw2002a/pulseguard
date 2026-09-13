@@ -41,7 +41,7 @@ jobs:
       - name: Unit, local Spark, and real Mongo integration tests
         env:
           SPARK_LOCAL_IP: 127.0.0.1
-        run: ./mvnw -B -ntp -Pintegration,spark-tests verify
+        run: ./mvnw -B -ntp --fail-at-end -Pintegration,spark-tests verify
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,6 +67,20 @@ jobs:
         run: docker compose up -d --build
       - name: Exercise rules, idempotency, conflict, and checkpoint recovery
         run: python scripts/e2e.py --with-recovery --timeout 300
+      - name: Measure synthetic HTTP ingestion
+        run: python scripts/load_generator.py --count 120 --rate 20 --report artifacts/load-report.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/dashboard/package-lock.json
+      - name: Install live dashboard capture dependencies
+        run: npm ci --prefix tests/dashboard
+      - name: Install Chromium for live dashboard evidence
+        working-directory: tests/dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Capture dashboard connected to the real running pipeline
+        run: node tests/dashboard/capture-live.cjs
       - name: Capture runtime evidence
         if: always()
         run: |

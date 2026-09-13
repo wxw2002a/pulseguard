@@ -13,7 +13,15 @@
 
 </div>
 
-PulseGuard accepts transaction events, delivers them reliably through Kafka, computes explainable risk signals with **Java Spark Structured Streaming**, and exposes a review workflow backed by MongoDB. The repository includes synthetic event generation, a live investigation dashboard, deployment manifests and automated recovery checks.
+PulseGuard is an **e-commerce payment event monitoring and investigation system**. It accepts transaction events, delivers them reliably through Kafka, computes explainable risk signals with **Java Spark Structured Streaming**, and exposes a review workflow backed by MongoDB. The repository includes synthetic event generation, a live investigation dashboard, deployment manifests and automated recovery checks.
+
+## Problems it addresses
+
+- **Retried callbacks inflate payment counts:** immutable transaction IDs and conflict detection prevent a repeated callback from creating a second ledger entry; exact in-window deduplication also handles a republished Kafka event.
+- **A broker outage loses accepted work:** the transaction and outbox are committed together before HTTP acceptance. Publication can recover from an expired lease or a failed broker connection.
+- **Suspicious activity has no investigation trail:** concentrated small payments, high transaction frequency and large payments produce explainable signals. Operators can inspect the matching original transactions and record a reasoned decision with a preserved review history.
+
+The system monitors events after they are received; it does not authorize, block, refund or move money. A payment service integrates by posting its normalized events to the ingestion API with a stable transaction ID. The included generator drives that same interface using synthetic data.
 
 ![PulseGuard risk workspace — explicitly labeled synthetic sample data](docs/assets/dashboard.png)
 
@@ -28,7 +36,8 @@ PulseGuard accepts transaction events, delivers them reliably through Kafka, com
 | Kafka replays events after failure | Stable alert IDs, exact deduplication within event-time windows, full snapshot upserts | [Streaming engine](services/streaming/src/main/java/io/pulseguard/streaming) |
 | Events arrive out of order | One-minute tumbling windows with a two-minute watermark and persistent query checkpoints | [Transforms](services/streaming/src/main/java/io/pulseguard/streaming/StreamTransforms.java) |
 | Bad records poison a stream | Strict schema parsing and deterministic quarantine keyed by topic/partition/offset | [Parser](services/streaming/src/main/java/io/pulseguard/streaming/TransactionParser.java) |
-| Replay overwrites an analyst's decision | Alert creation uses `$setOnInsert`; review status survives reprocessing | [Mongo sinks](services/streaming/src/main/java/io/pulseguard/streaming/MongoSinks.java) |
+| Replay overwrites an analyst's decision | Alert creation uses `$setOnInsert`; review status and decision history survive reprocessing | [Mongo sinks](services/streaming/src/main/java/io/pulseguard/streaming/MongoSinks.java) |
+| An alert cannot be investigated | Match original transaction evidence by event ID or indexed account/currency/time window; atomically append reasoned reviews | [Investigation service](services/api/src/main/java/io/pulseguard/api/investigation/InvestigationService.java) |
 | A diagram works but the system does not | CI starts actual Kafka, MongoDB, Java and Spark; checks duplicate delivery and restart recovery | [End-to-end checks](scripts/e2e.py) |
 
 ## Architecture
@@ -65,7 +74,7 @@ python scripts/e2e.py --timeout 300
 python scripts/load_generator.py --count 120 --rate 10 --save-events artifacts/events.jsonl
 ```
 
-Open **[localhost:8080](http://localhost:8080)**. In **Connection settings**, enter `local-dev-key` (the local development default); use **Run a scenario** to send mixed traffic, a velocity burst, a high-value payment or a card-testing pattern. Select an alert to see its reasons and save a review status.
+Open **[localhost:8080](http://localhost:8080)**. In **Connection settings**, enter `local-dev-key` (the local development default); use **Run a scenario** to send mixed traffic, a velocity burst, a high-value payment or a card-testing pattern. Select an alert to inspect its original transaction evidence, enter an operator label and decision note, and save the review. Previous decisions remain visible in its history.
 
 | Endpoint | Purpose |
 |---|---|
@@ -108,11 +117,13 @@ Send a **current UTC eventTime** for a live demonstration; old event times may b
 | POST | `/api/v1/transactions` | API key; `202 {transactionId,status,duplicate}`; conflicting retry `409` |
 | GET | `/api/v1/transactions?limit=100` | Recent accepted events and delivery status |
 | GET | `/api/v1/alerts?limit=100&severity=HIGH` | Risk signals, reasons and review status |
-| PATCH | `/api/v1/alerts/{id}/review` | API key; body `{"status":"INVESTIGATING"}` |
+| GET | `/api/v1/alerts/{id}` | Detail, latest 50 review entries and total review count |
+| GET | `/api/v1/alerts/{id}/evidence?limit=200` | Original transaction or matching account/currency/window transactions |
+| PATCH | `/api/v1/alerts/{id}/review` | API key; body `{"status":"INVESTIGATING","analyst":"risk-team","note":"Checking related merchant activity"}` |
 | GET | `/api/v1/windows?limit=100` | Account/currency window snapshots |
 | GET | `/api/v1/overview` | Counts, unresolved high risk, currency-separated volumes, outbox backlog |
 
-List endpoints return `{"items":[...]}`. Percent-encode alert IDs when placing them in paths. See [the JSON Schema](contracts/transaction.v1.schema.json) and [the OpenAPI contract](contracts/openapi.yaml).
+List endpoints return `{"items":[...]}`. Percent-encode alert IDs when placing them in paths. Reviews atomically append to a bounded 500-entry history; a full history returns 409 instead of silently dropping older decisions. The operator label is self-reported, not an authenticated identity. See [the JSON Schema](contracts/transaction.v1.schema.json) and [the OpenAPI contract](contracts/openapi.yaml).
 
 ## Risk rules
 
