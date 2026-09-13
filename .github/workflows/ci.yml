@@ -10,6 +10,29 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/contracts/requirements.txt
+      - name: Install pinned contract validation dependencies
+        run: python -m pip install -r tests/contracts/requirements.txt
+      - name: Validate event schemas and API contracts
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python scripts/validate_contracts.py 2>&1 | tee artifacts/contracts.log
+      - name: Upload contract validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-test-reports
+          path: artifacts/
   dashboard:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -27,7 +50,18 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Exercise dashboard interactions and API states
         working-directory: tests/dashboard
-        run: npm test
+        env:
+          SCREENSHOT_PATH: ../../artifacts/dashboard-test.png
+        run: |
+          set -o pipefail
+          mkdir -p ../../artifacts
+          npm test 2>&1 | tee ../../artifacts/dashboard-tests.log
+      - name: Upload dashboard test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-test-reports
+          path: artifacts/
   java-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -41,7 +75,7 @@ jobs:
       - name: Unit, local Spark, and real Mongo integration tests
         env:
           SPARK_LOCAL_IP: 127.0.0.1
-        run: ./mvnw -B -ntp --fail-at-end -Pintegration,spark-tests verify
+        run: ./mvnw -B -ntp --fail-at-end -Pintegration,spark-tests,coverage verify
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,6 +84,14 @@ jobs:
           path: |
             services/*/target/surefire-reports/
             services/*/target/failsafe-reports/
+      - name: Upload JaCoCo coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage
+          path: |
+            services/*/target/site/jacoco/
+            services/*/target/jacoco.exec
   pipeline-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -69,6 +111,11 @@ jobs:
         run: python scripts/e2e.py --with-recovery --timeout 300
       - name: Measure synthetic HTTP ingestion
         run: python scripts/load_generator.py --count 120 --rate 20 --report artifacts/load-report.json
+      - name: Enforce k6 ingestion reliability and latency thresholds
+        run: |
+          docker run --rm --network host --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work" -w /work -e GITHUB_SHA \
+            grafana/k6:2.2.0@sha256:9bd01d6941fca969cb61bb57d2da5ee9b385fe2aa8881df3798c196564d6ace6 run tests/performance/ingestion.k6.js
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -98,3 +145,56 @@ jobs:
       - name: Tear down ephemeral CI stack
         if: always()
         run: docker compose down -v
+  kubernetes:
+    uses: ./.github/workflows/kubernetes.yml
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [contracts, dashboard, java-tests, pipeline-e2e, kubernetes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download all test evidence
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/test-results
+      - name: Build consolidated test report
+        if: always()
+        run: python scripts/test_report.py --artifacts artifacts/test-results --output artifacts/test-report.md
+      - name: Add test report to the workflow summary
+        if: always()
+        run: |
+          if [ -f artifacts/test-report.md ]; then
+            cat artifacts/test-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload consolidated test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-test-report
+          path: artifacts/test-report.md
+      - name: Require every validation job to succeed
+        if: always()
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          results = json.loads(os.environ["REQUIRED_RESULTS"])
+          failed = {name: job["result"] for name, job in results.items() if job["result"] != "success"}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n| Required job | Result |\n| --- | --- |\n")
+              for name, job in results.items():
+                  summary.write(f"| {name} | {job['result']} |\n")
+          if failed:
+              print("Quality gate failed: " + json.dumps(failed), file=sys.stderr)
+              sys.exit(1)
+          print("Quality gate passed: all five required validation jobs succeeded")
+          PY

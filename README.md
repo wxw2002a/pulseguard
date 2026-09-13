@@ -10,7 +10,7 @@
 ![Spark](https://img.shields.io/badge/Apache_Spark-3.5.8-d28557)
 ![License](https://img.shields.io/badge/license-MIT-809b65)
 
-[Open workspace](https://wxw2002a.github.io/pulseguard/) · [Architecture](docs/architecture.md) · [Integration](docs/integration.md) · [Runbook](docs/runbook.md) · [API contract](contracts/openapi.yaml) · [Verification](docs/verification.md)
+[Open workspace](https://wxw2002a.github.io/pulseguard/) · [Architecture](docs/architecture.md) · [Integration](docs/integration.md) · [Runbook](docs/runbook.md) · [Testing](docs/testing.md) · [Verification](docs/verification.md)
 
 </div>
 
@@ -140,11 +140,13 @@ These are transparent demonstration rules. They are not trained fraud models, re
 
 ## Verify the behavior
 
+Every pull request and `main` push runs **JUnit 5 / Mockito / MockMvc**, real **Testcontainers** and Spark tests, **JaCoCo** coverage, **Playwright** browser tests, API contract validation, Compose recovery scenarios, **k6** performance thresholds and a real **kind** Kubernetes deployment. A required **Quality gate** job collects the reports and fails if any test job fails or required evidence is missing. Successful `main` verification enables Pages publication, followed by a browser check of the public deployment. [Test layers, commands, budgets and reports](docs/testing.md).
+
 **Verified:** [57 Java tests with zero skips and a complete Compose recovery run](https://github.com/wxw2002a/pulseguard/actions/runs/34742387094), plus [actual deployment and pipeline checks on Kubernetes](https://github.com/wxw2002a/pulseguard/actions/runs/34742236882). The recovery test stops Kafka, accepts a transaction while the broker is unavailable, and confirms delivery and risk analysis after Kafka returns. Original transaction evidence and review-history preservation are also checked.
 
 ```bash
-./mvnw -B -ntp verify                         # Java compilation, unit/MVC tests and JARs
-./mvnw -B -ntp -Pintegration,spark-tests verify # Linux: real Spark + Testcontainers
+./mvnw -B -ntp -Pcoverage verify              # Unit/MVC tests, JARs and JaCoCo reports
+./mvnw -B -ntp -Pintegration,spark-tests,coverage verify # Linux: real Spark + Testcontainers
 python scripts/validate_configs.py           # Compose, Kustomize, config checks
 python scripts/e2e.py --with-recovery         # Running Compose: duplicate + restart checks
 python scripts/load_generator.py --count 1000 --rate 0 --workers 16
@@ -152,7 +154,7 @@ python scripts/load_generator.py --count 1000 --rate 0 --workers 16
 
 The generator writes measured HTTP acceptance latency/throughput into `artifacts/`; it does **not** measure end-to-end Spark latency. Do not turn those numbers into pipeline throughput claims. [Verification evidence and limitations](docs/verification.md) describe exactly what has run.
 
-Optional browser checks: `npm ci --prefix tests/dashboard`, then from `tests/dashboard` run `npx playwright install chromium` and `npm test`. The browser test checks preview labeling, filtering, review, request authentication, unique scenario IDs, HTML escaping, mobile layout and offline behavior.
+To run the CI browser checks locally: `npm ci --prefix tests/dashboard`, then from `tests/dashboard` run `npx playwright install chromium` and `npm test`. Playwright checks preview labeling, filtering, review, request authentication, unique scenario IDs, HTML escaping, mobile layout, offline behavior and hosted snapshot isolation.
 
 ## Kubernetes
 

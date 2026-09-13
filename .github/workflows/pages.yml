@@ -47,3 +47,24 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/dashboard/package-lock.json
+      - name: Install published-site browser checks
+        run: npm ci --prefix tests/dashboard
+      - name: Install Chromium
+        working-directory: tests/dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Verify the actual public deployment
+        env:
+          BASE_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_SOURCE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: node tests/dashboard/deployed-smoke.cjs
+      - name: Retain published-site report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-site-evidence
+          path: artifacts/deployed-browser/

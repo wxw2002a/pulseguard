@@ -2,7 +2,8 @@
   "name": "pulseguard-dashboard-tests",
   "private": true,
   "scripts": {
-    "test": "node smoke.cjs && node pages-smoke.cjs"
+    "test": "node smoke.cjs && node pages-smoke.cjs",
+    "test:deployed": "node deployed-smoke.cjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

@@ -1,10 +1,12 @@
 name: kubernetes-smoke
 on:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: kubernetes-smoke-${{ github.ref }}
+  # Keep the called workflow distinct from the verify caller's concurrency group.
+  group: kubernetes-smoke-${{ github.run_id }}
   cancel-in-progress: true
 jobs:
   kind-development-stack:

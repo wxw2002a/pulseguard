@@ -19,6 +19,7 @@ The default snapshot is read-only. It does not submit payments, save new reviews
 3. The export records `capturedAt`, the exact source commit and verification run URL. Local screenshot capture does not export a publishable snapshot by default.
 4. After a successful same-repository `main` push verification, `publish-pages` checks out that exact source commit, downloads its `pipeline-evidence` artifact and builds the page using that snapshot. Failed checks do not replace the published site.
 5. Official GitHub Pages actions upload and deploy the generated static directory. All assets use relative paths so the site works under `/pulseguard/`.
+6. Playwright checks the actual public URL after deployment, including its expected source commit, recorded evidence and review history, assets and mobile layout. Reports and screenshots are retained in `published-site-evidence`.
 
 The capture is a point-in-time result from an eventually consistent system. Lists are bounded independently; overview totals can exceed the displayed record count. Source inputs are synthetic test events, not customer payments. A captured result demonstrates the verified run and is not a throughput benchmark or a claim of production traffic.
 
@@ -32,6 +33,7 @@ The capture is a point-in-time result from an eventually consistent system. List
 | Verification workflow | `.github/workflows/ci.yml` |
 | GitHub Pages deployment | `.github/workflows/pages.yml` |
 | Browser checks under a repository subpath | `tests/dashboard/pages-smoke.cjs` |
+| Public deployment browser checks | `tests/dashboard/deployed-smoke.cjs` |
 
 The browser suite checks captured data, source links, evidence and history, escaped operator text, read-only controls, sample isolation, mobile layout and absence of live API requests.
 
