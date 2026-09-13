@@ -1,5 +1,7 @@
 "use strict";
 const $ = (selector) => document.querySelector(selector);
+const hostedSnapshot = window.PULSEGUARD_RUNTIME?.mode === "snapshot";
+let snapshotPromise;
 const state = {
   sample: new URLSearchParams(location.search).get("demo") === "1",
   overview: {},
@@ -93,7 +95,70 @@ function switchView(view) {
   $("#breadcrumb-label").textContent = titles[view][2];
 }
 
+async function loadSnapshot() {
+  if (!snapshotPromise) {
+    snapshotPromise = (async () => {
+      const response = await fetch(window.PULSEGUARD_RUNTIME.snapshotUrl, {
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok)
+        throw new Error(`Snapshot returned HTTP ${response.status}`);
+      const snapshot = await response.json();
+      if (
+        snapshot.schemaVersion !== 1 ||
+        snapshot.source !== "verified-ci" ||
+        !/^https:\/\/github\.com\/wxw2002a\/pulseguard\/actions\/runs\/\d+$/.test(
+          snapshot.runUrl,
+        ) ||
+        Number.isNaN(new Date(snapshot.capturedAt).getTime()) ||
+        ![snapshot.alerts, snapshot.transactions, snapshot.windows].every(
+          Array.isArray,
+        ) ||
+        !snapshot.overview ||
+        !snapshot.details ||
+        !snapshot.evidence
+      ) {
+        throw new Error("The verified snapshot is incomplete or invalid.");
+      }
+      return snapshot;
+    })().catch((error) => {
+      snapshotPromise = undefined;
+      throw error;
+    });
+  }
+  return snapshotPromise;
+}
+
+async function snapshotRequest(path, options) {
+  if (options.method && options.method !== "GET")
+    throw new Error("The published snapshot is read-only.");
+  const snapshot = await loadSnapshot();
+  const url = new URL(path, location.origin);
+  if (url.pathname === "/overview") return structuredClone(snapshot.overview);
+  const collection = {
+    "/alerts": "alerts",
+    "/transactions": "transactions",
+    "/windows": "windows",
+  }[url.pathname];
+  if (collection) {
+    const requestedLimit = Number(url.searchParams.get("limit") || 200);
+    const limit = Math.min(200, Math.max(1, requestedLimit || 200));
+    return { items: structuredClone(snapshot[collection].slice(0, limit)) };
+  }
+  const match = url.pathname.match(/^\/alerts\/([^/]+)(\/evidence)?$/);
+  if (match) {
+    const id = decodeURIComponent(match[1]);
+    if (!Object.hasOwn(snapshot.details, id))
+      throw new Error("Alert is absent from this snapshot.");
+    return match[2]
+      ? { items: structuredClone(snapshot.evidence[id] || []) }
+      : structuredClone(snapshot.details[id]);
+  }
+  throw new Error("This view is not available in the published snapshot.");
+}
+
 async function request(path, options = {}) {
+  if (hostedSnapshot) return snapshotRequest(path, options);
   const headers = { Accept: "application/json", ...options.headers };
   if (options.body) headers["Content-Type"] = "application/json";
   if (options.method && options.method !== "GET")
@@ -290,12 +355,48 @@ function render() {
 let refreshEpoch = 0;
 async function refresh() {
   const epoch = ++refreshEpoch;
+  if (hostedSnapshot) {
+    const readOnly = !state.sample;
+    [
+      "#save-review",
+      "#review-status",
+      "#review-note",
+      "#review-analyst",
+      "#simulate-button",
+    ].forEach((selector) => {
+      $(selector).disabled = readOnly;
+    });
+    $("#settings-button").hidden = true;
+    $("#simulate-button").title = readOnly
+      ? "Run the full stack to submit transactions."
+      : "Explore the sample workspace";
+    $(".workspace small").textContent = state.sample
+      ? "Sample workspace"
+      : "Verified CI snapshot";
+    $("#alerts-view .panel-heading p").textContent = readOnly
+      ? "Inspect recorded signals, original evidence and review history."
+      : "Try review decisions on illustrative records in this tab.";
+    $("#transactions-view .panel-heading p").textContent = readOnly
+      ? "Up to 200 immutable transaction records captured from the verified run."
+      : "Illustrative transaction records for exploring the workspace.";
+    $(".review-actions .dialog-hint").textContent = readOnly
+      ? "Captured decisions are read-only. Turn on Sample data to try a review locally."
+      : "A note and operator label are required. Sample reviews stay in this tab and reset on refresh.";
+    $("#scenario-dialog h2").textContent = "Explore pipeline scenarios.";
+    $("#scenario-dialog > p").textContent =
+      "These scenarios are available in the full application. This hosted preview displays captured results and does not submit transactions.";
+    $("#send-scenario").textContent = "How to run this scenario →";
+  }
   if (state.sample) {
     Object.assign(state, sampleData());
     $("#connection").className = "connection sample";
     $("#connection").innerHTML = "<i></i> Sample workspace";
     $("#notice").textContent =
-      "SAMPLE DATA · This is an interactive preview using synthetic fixtures. Switch off Sample data to connect to your running API. These values are not benchmark results.";
+      "SAMPLE DATA · This is an interactive preview using synthetic fixtures. " +
+      (hostedSnapshot
+        ? "Reviews stay in this tab. Switch off Sample data to return to the verified snapshot."
+        : "Switch off Sample data to connect to your running API.") +
+      " These values are not benchmark results.";
     $("#notice").hidden = false;
     $("#updated-at").textContent = "Illustrative dataset · not live traffic";
     render();
@@ -304,9 +405,9 @@ async function refresh() {
   try {
     const [overview, alerts, transactions, windows] = await Promise.all([
       request("/overview"),
-      request("/alerts?limit=100"),
-      request("/transactions?limit=100"),
-      request("/windows?limit=100"),
+      request(`/alerts?limit=${hostedSnapshot ? 200 : 100}`),
+      request(`/transactions?limit=${hostedSnapshot ? 200 : 100}`),
+      request(`/windows?limit=${hostedSnapshot ? 200 : 100}`),
     ]);
     if (epoch !== refreshEpoch) return;
     Object.assign(state, {
@@ -315,18 +416,33 @@ async function refresh() {
       transactions: transactions.items || [],
       windows: windows.items || [],
     });
-    $("#connection").className = "connection live";
-    $("#connection").innerHTML = "<i></i> API connected";
-    $("#notice").hidden = true;
-    $("#updated-at").textContent =
-      `Updated ${time(Date.now())} · refreshes every 5s`;
+    if (hostedSnapshot) {
+      const snapshot = await loadSnapshot();
+      if (epoch !== refreshEpoch) return;
+      $("#connection").className = "connection sample";
+      $("#connection").innerHTML = "<i></i> Verified run";
+      $("#notice").innerHTML =
+        `READ-ONLY SNAPSHOT · Captured ${escapeHtml(snapshot.capturedAt)} from a real Java → Kafka → Spark → MongoDB verification run using synthetic test events. This page does not run the backend. <a href="${escapeHtml(snapshot.runUrl)}" target="_blank" rel="noreferrer">View source run ↗</a> · Turn on Sample data to try local review actions.`;
+      $("#notice").hidden = false;
+      $("#updated-at").textContent =
+        `Captured ${snapshot.capturedAt} · up to 200 records per list`;
+    } else {
+      $("#connection").className = "connection live";
+      $("#connection").innerHTML = "<i></i> API connected";
+      $("#notice").hidden = true;
+      $("#updated-at").textContent =
+        `Updated ${time(Date.now())} · refreshes every 5s`;
+    }
     render();
   } catch (error) {
     if (epoch !== refreshEpoch) return;
     $("#connection").className = "connection";
-    $("#connection").innerHTML = "<i></i> API unavailable";
-    $("#notice").textContent =
-      `Unable to refresh live data. ${error.message} Start the Compose stack, or turn on Sample data to explore the workspace. Previous values, if any, are stale.`;
+    $("#connection").innerHTML = hostedSnapshot
+      ? "<i></i> Snapshot unavailable"
+      : "<i></i> API unavailable";
+    $("#notice").textContent = hostedSnapshot
+      ? `Unable to load the verified snapshot. ${error.message} Try Refresh, or turn on Sample data to explore illustrative records.`
+      : `Unable to refresh live data. ${error.message} Start the Compose stack, or turn on Sample data to explore the workspace. Previous values, if any, are stale.`;
     $("#notice").hidden = false;
   }
 }
@@ -393,6 +509,12 @@ async function openAlert(id) {
 }
 
 async function saveReview() {
+  if (hostedSnapshot && !state.sample) {
+    toast(
+      "The verified snapshot is read-only. Turn on Sample data to try local review actions.",
+    );
+    return;
+  }
   const status = $("#review-status").value;
   const note = $("#review-note").value.trim();
   const analyst = $("#review-analyst").value.trim();
@@ -431,6 +553,11 @@ async function saveReview() {
 }
 
 async function runScenario() {
+  if (hostedSnapshot) {
+    $("#scenario-result").textContent =
+      "This sample preview cannot submit transactions. Run the full stack locally to connect to the API and execute a scenario.";
+    return;
+  }
   if (state.sample) {
     $("#scenario-result").textContent =
       "Switch off Sample data and connect to your running API to send transactions.";
@@ -532,5 +659,5 @@ $("#refresh-button").addEventListener("click", refresh);
 render();
 refresh();
 setInterval(() => {
-  if (!state.sample && !document.hidden) refresh();
+  if (!hostedSnapshot && !state.sample && !document.hidden) refresh();
 }, 5000);

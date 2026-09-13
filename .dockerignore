@@ -6,6 +6,7 @@
 .idea
 .vscode
 artifacts
+_site
 docs
 scripts
 tests

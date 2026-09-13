@@ -9,7 +9,7 @@ Observed on **2026-09-13**. All figures below come from retained CI output. The 
 | [Full verify workflow](https://github.com/wxw2002a/pulseguard/actions/runs/34742387094) | `7554a95` | Java tests, browser checks and full Compose recovery pipeline all pass |
 | [Kubernetes smoke](https://github.com/wxw2002a/pulseguard/actions/runs/34742236882) | `1897933` | Real one-node kind cluster; development manifests deploy and the payment event pipeline passes |
 
-The difference between these commits changes documentation, a UI ordering caption and the Compose-only BSON assertion/export. The application backend, Spark engine and Kubernetes manifests tested in the cluster are identical. Later evidence-only commits do not change the tested runtime.
+The difference between these two recorded commits changes documentation, a UI ordering caption and the Compose-only BSON assertion/export. The application backend, Spark engine and Kubernetes manifests tested in the cluster are identical. The hosted dashboard's current capture links to its own source verification run; see [GitHub Pages publication](github-pages.md) for that separate deployment and its browser checks.
 
 ## Java: 57 tests, zero failures, zero skips
 

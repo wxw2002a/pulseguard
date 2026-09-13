@@ -19,4 +19,5 @@ artifacts/
 !docs/artifacts/**
 Thumbs.db
 .DS_Store
+_site/
 infra/k8s/**/secret.yaml

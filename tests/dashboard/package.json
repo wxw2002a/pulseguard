@@ -1,6 +1,10 @@
 {
   "name": "pulseguard-dashboard-tests",
   "private": true,
-  "scripts": {"test": "node smoke.cjs"},
-  "devDependencies": {"playwright": "1.62.1"}
+  "scripts": {
+    "test": "node smoke.cjs && node pages-smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
 }

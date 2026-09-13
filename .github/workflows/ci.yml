@@ -80,6 +80,8 @@ jobs:
         working-directory: tests/dashboard
         run: npx playwright install --with-deps chromium
       - name: Capture dashboard connected to the real running pipeline
+        env:
+          PUBLISH_DEMO_SNAPSHOT: 'true'
         run: node tests/dashboard/capture-live.cjs
       - name: Capture runtime evidence
         if: always()

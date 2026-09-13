@@ -10,11 +10,13 @@
 ![Spark](https://img.shields.io/badge/Apache_Spark-3.5.8-d28557)
 ![License](https://img.shields.io/badge/license-MIT-809b65)
 
-[Architecture](docs/architecture.md) · [Integration](docs/integration.md) · [Runbook](docs/runbook.md) · [API contract](contracts/openapi.yaml) · [Verification](docs/verification.md)
+[Open workspace](https://wxw2002a.github.io/pulseguard/) · [Architecture](docs/architecture.md) · [Integration](docs/integration.md) · [Runbook](docs/runbook.md) · [API contract](contracts/openapi.yaml) · [Verification](docs/verification.md)
 
 </div>
 
 PulseGuard is an **e-commerce payment event monitoring and investigation system**. It accepts transaction events, delivers them reliably through Kafka, computes explainable risk signals with **Java Spark Structured Streaming**, and exposes a review workflow backed by MongoDB. The repository includes synthetic event generation, a live investigation dashboard, deployment manifests and automated recovery checks.
+
+**[Open the hosted workspace](https://wxw2002a.github.io/pulseguard/)** — no local installation required. Browse a read-only snapshot of actual CI pipeline results, including alerts, original transaction evidence and recorded review history. The page identifies its capture time and source run. **Sample data** switches to separate illustrative records for trying local review actions. GitHub Pages hosts the frontend; run the full stack below to ingest events and execute Java, Kafka and Spark. [Hosting and data provenance](docs/github-pages.md).
 
 ## Problems it addresses
 
