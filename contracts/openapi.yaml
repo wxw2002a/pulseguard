@@ -1,0 +1,192 @@
+openapi: 3.1.0
+info:
+  title: PulseGuard API
+  version: 1.0.0
+  description: Local transaction ingestion and risk investigation. Lists return bounded recent records, not a complete export.
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/v1/transactions:
+    post:
+      operationId: acceptTransaction
+      summary: Atomically accept an immutable transaction and its outbox entry
+      security: [{ApiKey: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './transaction.v1.schema.json'}
+      responses:
+        '202':
+          description: Accepted, including an identical retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transactionId, status, duplicate]
+                properties:
+                  transactionId: {type: string}
+                  status: {type: string, const: ACCEPTED}
+                  duplicate: {type: boolean}
+        '400': {description: Invalid transaction}
+        '401': {description: Missing or incorrect X-API-Key}
+        '409': {description: Transaction ID already belongs to a different payload}
+    get:
+      operationId: listTransactions
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/AccountId'}
+      responses:
+        '200':
+          description: Recent transactions, newest ingestion first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - {$ref: '#/components/schemas/TransactionView'}
+        '400': {description: Invalid query parameters}
+  /api/v1/alerts:
+    get:
+      operationId: listAlerts
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/AccountId'}
+        - name: severity
+          in: query
+          schema: {type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL]}
+      responses:
+        '200':
+          description: Recent risk signals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+        '400': {description: Invalid query parameters}
+  /api/v1/alerts/{id}/review:
+    patch:
+      operationId: reviewAlert
+      security: [{ApiKey: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Percent-encoded deterministic alert ID
+          schema: {type: string, minLength: 1, maxLength: 256}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
+      responses:
+        '200':
+          description: Updated alert
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Alert'}
+        '400': {description: Invalid review state}
+        '401': {description: Missing or incorrect X-API-Key}
+        '404': {description: Unknown alert ID}
+  /api/v1/windows:
+    get:
+      operationId: listWindows
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/AccountId'}
+      responses:
+        '200':
+          description: Recent account/currency event-time windows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Window'}}
+        '400': {description: Invalid query parameters}
+  /api/v1/overview:
+    get:
+      operationId: overview
+      responses:
+        '200':
+          description: Dashboard totals; multiple reads are eventually consistent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions: {type: integer, format: int64}
+                  alerts: {type: integer, format: int64}
+                  highRisk: {type: integer, format: int64, description: Unresolved HIGH or CRITICAL alerts}
+                  volumeByCurrency: {type: object, additionalProperties: {type: integer, format: int64}}
+                  pendingDelivery: {type: integer, format: int64}
+                  reviewedAlerts: {type: integer, format: int64}
+components:
+  securitySchemes:
+    ApiKey: {type: apiKey, in: header, name: X-API-Key}
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    AccountId:
+      name: accountId
+      in: query
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
+  schemas:
+    TransactionView:
+      type: object
+      properties:
+        schemaVersion: {type: integer}
+        transactionId: {type: string}
+        accountId: {type: string}
+        merchantId: {type: string}
+        amountMinor: {type: integer, format: int64}
+        currency: {type: string}
+        country: {type: string}
+        channel: {type: string}
+        eventTime: {type: string, format: date-time}
+        ingestedAt: {type: string, format: date-time}
+        deliveryStatus: {type: string, enum: [PENDING, IN_FLIGHT, SENT]}
+    Alert:
+      type: object
+      properties:
+        id: {type: string}
+        transactionId: {type: string}
+        accountId: {type: string}
+        currency: {type: string}
+        rule: {type: string, enum: [HIGH_VALUE, VELOCITY, CARD_TESTING]}
+        severity: {type: string}
+        score: {type: integer}
+        reasons: {type: array, items: {type: string}}
+        status: {type: string, enum: [OPEN, INVESTIGATING, RESOLVED]}
+        amountMinor: {type: integer, format: int64}
+        transactionCount: {type: integer, format: int64}
+        totalAmountMinor: {type: integer, format: int64}
+        eventTime: {type: string, format: date-time}
+        windowStart: {type: string, format: date-time}
+        windowEnd: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+        reviewedAt: {type: string, format: date-time}
+    Window:
+      type: object
+      properties:
+        id: {type: string}
+        accountId: {type: string}
+        currency: {type: string}
+        windowStart: {type: string, format: date-time}
+        windowEnd: {type: string, format: date-time}
+        transactionCount: {type: integer, format: int64}
+        totalAmountMinor: {type: integer, format: int64}
+        highValueCount: {type: integer, format: int64}
+        updatedAt: {type: string, format: date-time}

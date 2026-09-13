@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wxw2002a/pulseguard/contracts/transaction.v1.schema.json",
+  "title": "PulseGuard Transaction v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "transactionId", "accountId", "merchantId", "amountMinor", "currency", "country", "channel", "eventTime"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "const": 1},
+    "transactionId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "accountId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "merchantId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "amountMinor": {"type": "integer", "minimum": 1, "maximum": 100000000000, "description": "Integer minor units. For supported currencies, divide by 100 for display."},
+    "currency": {"type": "string", "enum": ["USD", "CAD", "EUR", "GBP"]},
+    "country": {"type": "string", "pattern": "^[A-Z]{2}$"},
+    "channel": {"type": "string", "enum": ["WEB", "MOBILE", "POS"]},
+    "eventTime": {"type": "string", "format": "date-time", "description": "ISO instant; no more than 30 seconds in the future. API accepts retained history; window membership depends on watermark."}
+  }
+}

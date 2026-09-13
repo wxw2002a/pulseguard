@@ -1,0 +1,63 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+spring:
+  application:
+    name: pulseguard-api
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/pulseguard}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
+      fail-on-numbers-for-enums: true
+    serialization:
+      write-dates-as-timestamps: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+        delivery.timeout.ms: 20000
+        request.timeout.ms: 10000
+        max.block.ms: 2000
+        linger.ms: 5
+    admin:
+      fail-fast: false
+  task:
+    scheduling:
+      pool:
+        size: 2
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,mongo,kafka
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      application: ${spring.application.name}
+pulseguard:
+  api-key: ${INGEST_API_KEY:local-dev-key}
+  transaction-topic: ${TRANSACTION_TOPIC:transactions.v1}
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:1000}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
+    lease-duration: 30s

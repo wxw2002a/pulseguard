@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.pulseguard</groupId>
+  <artifactId>spark-connectors</artifactId>
+  <version>1.0.0</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql-kafka-0-10_2.12</artifactId>
+      <version>3.5.8</version>
+      <exclusions>
+        <!-- These are already supplied by the exact-version Spark image. -->
+        <exclusion><groupId>org.apache.spark</groupId><artifactId>spark-tags_2.12</artifactId></exclusion>
+        <exclusion><groupId>org.scala-lang</groupId><artifactId>scala-library</artifactId></exclusion>
+        <exclusion><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId></exclusion>
+        <exclusion><groupId>org.lz4</groupId><artifactId>lz4-java</artifactId></exclusion>
+        <exclusion><groupId>org.xerial.snappy</groupId><artifactId>snappy-java</artifactId></exclusion>
+        <exclusion><groupId>org.apache.hadoop</groupId><artifactId>hadoop-client-api</artifactId></exclusion>
+        <exclusion><groupId>org.apache.hadoop</groupId><artifactId>hadoop-client-runtime</artifactId></exclusion>
+        <exclusion><groupId>commons-logging</groupId><artifactId>commons-logging</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+  <build><plugins><plugin>
+    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId><version>3.8.1</version>
+  </plugin></plugins></build>
+</project>

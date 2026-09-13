@@ -1,0 +1,12 @@
+# Native driver/executor mode requires an installed RWX-capable storage class.
+# Replace the storageClassName before applying; the dev RWO volume is not sufficient.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-checkpoints-rwx
+  namespace: pulseguard
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: REPLACE_WITH_RWX_STORAGE_CLASS
+  resources:
+    requests: {storage: 10Gi}

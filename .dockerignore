@@ -1,0 +1,14 @@
+.git
+.github
+**/target
+**/__pycache__
+.env
+.idea
+.vscode
+artifacts
+docs
+scripts
+tests
+infra/k8s
+infra/monitoring
+*.md

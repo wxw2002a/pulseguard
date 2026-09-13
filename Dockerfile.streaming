@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+FROM maven:3.9.11-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY infra/spark-connectors/pom.xml /connectors/pom.xml
+# Download dependencies once during image build: runtime needs no Maven Central access.
+RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp -f /connectors/pom.xml dependency:copy-dependencies \
+    -DincludeScope=runtime -DoutputDirectory=/connectors/jars
+COPY pom.xml ./
+COPY services ./services
+RUN --mount=type=cache,target=/root/.m2 mvn -B -ntp -pl services/streaming -am package -DskipTests
+
+FROM apache/spark:3.5.8-scala2.12-java17-ubuntu
+USER root
+RUN mkdir -p /opt/pulseguard /var/lib/pulseguard/checkpoints \
+    && chown -R 185:185 /opt/pulseguard /var/lib/pulseguard
+COPY --from=build --chown=185:185 /connectors/jars/ /opt/spark/jars/
+COPY --from=build --chown=185:185 /build/services/streaming/target/pulseguard-streaming.jar /opt/pulseguard/pulseguard-streaming.jar
+USER 185:185
+ENV CHECKPOINT_DIR=/var/lib/pulseguard/checkpoints
+# Preserve Apache's entrypoint so the same image supports native Kubernetes driver/executor pods.
+CMD ["/opt/spark/bin/spark-submit", "--master", "local[2]", "--conf", "spark.driver.memory=1g", "--conf", "spark.sql.shuffle.partitions=4", "--class", "io.pulseguard.streaming.PulseGuardStreaming", "/opt/pulseguard/pulseguard-streaming.jar"]

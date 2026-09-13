@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-checkpoints
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 5Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streaming
+  annotations:
+    pulseguard.io/mode: "single-pod local[2] development; see infra/k8s/README.md for native distributed submission"
+spec:
+  replicas: 1
+  # A checkpoint directory must have exactly one active streaming query owner.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: streaming}
+  template:
+    metadata:
+      labels: {app: streaming}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsUser: 185
+        runAsGroup: 185
+        fsGroup: 185
+      initContainers:
+        - name: wait-for-topic
+          image: apache/kafka:3.9.1
+          command: [/bin/bash, -ec]
+          args:
+            - until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic transactions.v1; do sleep 5; done
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+      containers:
+        - name: streaming
+          image: pulseguard-streaming:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: spark-ui, containerPort: 4040}
+          envFrom:
+            - configMapRef: {name: pulseguard-config}
+          env:
+            - name: SPARK_LOCAL_IP
+              valueFrom:
+                fieldRef: {fieldPath: status.podIP}
+          resources:
+            requests: {cpu: 500m, memory: 1536Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          volumeMounts:
+            - {name: checkpoints, mountPath: /var/lib/pulseguard/checkpoints}
+          startupProbe:
+            tcpSocket: {port: spark-ui}
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket: {port: spark-ui}
+            periodSeconds: 10
+      volumes:
+        - name: checkpoints
+          persistentVolumeClaim: {claimName: spark-checkpoints}
