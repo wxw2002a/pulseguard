@@ -26,6 +26,8 @@ Window documents use `<accountId>:<currency>:<windowStartEpochMillis>` as `_id`.
 
 ## Delivery and state guarantees
 
+New alerts pin `evidenceVersion: 1`, sorted `evidenceTransactionIds` (at most 200 per rule), `evidenceCount` (all rule matches at detection) and `evidenceTruncated`. CARD_TESTING captures only payments at most 1,000 minor units; its `transactionCount` and `totalAmountMinor` remain whole-window context. Both ID lists are projected from the same deduplicated aggregate, after the existing stateful operator. This changes neither the `collect_set` state schema nor the checkpoint operator; never delete checkpoints as an upgrade step. The API reports missing ledger records and capture/response truncation explicitly.
+
 Two independent queries read the source with separate `events-v1` and `windows-v1` checkpoints. Event validation, event alerts, and dead letters are stateless. Window aggregation uses one stateful operator: a one-minute event-time window with a two-minute watermark and `collect_set(struct(transactionId, amountMinor))`.
 
 The producer contract guarantees that each transaction ID has one immutable payload. The API rejects conflicting reuse of an ID. Under that contract, the set removes duplicates both within and across micro-batches, including outbox retries. A producer that bypasses the API must enforce the same contract; reusing an ID with different amount/account/currency/time is unsupported and can corrupt analytics. Kafka ACLs should restrict writes to authorized producers.

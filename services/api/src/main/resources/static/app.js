@@ -10,6 +10,15 @@ const state = {
   windows: [],
   selected: null,
   loading: false,
+  recentAlerts: [],
+  sampleAlerts: null,
+  detail: null,
+  outcomes: null,
+  cursor: null,
+  nextCursor: null,
+  previousCursors: [],
+  pendingOperation: null,
+  saving: false,
 };
 const keyName = "pulseguard-api-key";
 const escapeHtml = (value) =>
@@ -93,6 +102,7 @@ function switchView(view) {
   $("#page-title").innerHTML = titles[view][0];
   $("#page-subtitle").textContent = titles[view][1];
   $("#breadcrumb-label").textContent = titles[view][2];
+  $("#mobile-view").value = view;
 }
 
 async function loadSnapshot() {
@@ -135,6 +145,8 @@ async function snapshotRequest(path, options) {
   const snapshot = await loadSnapshot();
   const url = new URL(path, location.origin);
   if (url.pathname === "/overview") return structuredClone(snapshot.overview);
+  if (url.pathname === "/outcomes")
+    return structuredClone(snapshot.outcomes || { unavailable: true });
   const collection = {
     "/alerts": "alerts",
     "/transactions": "transactions",
@@ -143,15 +155,35 @@ async function snapshotRequest(path, options) {
   if (collection) {
     const requestedLimit = Number(url.searchParams.get("limit") || 200);
     const limit = Math.min(200, Math.max(1, requestedLimit || 200));
-    return { items: structuredClone(snapshot[collection].slice(0, limit)) };
+    const records = snapshot[collection].filter(
+      (item) =>
+        collection !== "alerts" ||
+        ["status", "owner", "severity"].every(
+          (field) =>
+            !url.searchParams.get(field) ||
+            (item[field] || (field === "status" ? "OPEN" : "")) ===
+              url.searchParams.get(field),
+        ),
+    );
+    const offset = Math.max(0, Number(url.searchParams.get("cursor")) || 0);
+    return {
+      items: structuredClone(records.slice(offset, offset + limit)),
+      nextCursor:
+        offset + limit < records.length ? String(offset + limit) : null,
+    };
   }
   const match = url.pathname.match(/^\/alerts\/([^/]+)(\/evidence)?$/);
   if (match) {
     const id = decodeURIComponent(match[1]);
     if (!Object.hasOwn(snapshot.details, id))
       throw new Error("Alert is absent from this snapshot.");
+    const evidence = snapshot.evidence[id];
     return match[2]
-      ? { items: structuredClone(snapshot.evidence[id] || []) }
+      ? structuredClone(
+          Array.isArray(evidence)
+            ? { ...snapshot.evidenceMetadata?.[id], items: evidence }
+            : evidence || { items: [] },
+        )
       : structuredClone(snapshot.details[id]);
   }
   throw new Error("This view is not available in the published snapshot.");
@@ -169,18 +201,52 @@ async function request(path, options = {}) {
     signal: AbortSignal.timeout(12000),
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const error = new Error(
       response.status === 401
         ? "Set your API key in Connection settings first."
         : body.detail || body.message || `API returned HTTP ${response.status}`,
     );
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
+function outcomesFor(alerts) {
+  const byRule = new Map();
+  for (const alert of alerts) {
+    const row = byRule.get(alert.rule) || {
+      rule: alert.rule,
+      resolved: 0,
+      confirmedRisk: 0,
+      falsePositive: 0,
+      benign: 0,
+      unclassified: 0,
+    };
+    if (alert.status === "RESOLVED") {
+      row.resolved++;
+      const key = {
+        CONFIRMED_RISK: "confirmedRisk",
+        FALSE_POSITIVE: "falsePositive",
+        BENIGN: "benign",
+      }[alert.disposition];
+      if (key) row[key]++;
+      else row.unclassified++;
+    }
+    byRule.set(alert.rule, row);
+  }
+  return {
+    resolvedAlerts: [...byRule.values()].reduce(
+      (sum, row) => sum + row.resolved,
+      0,
+    ),
+    byRule: [...byRule.values()],
+  };
+}
+
 function sampleData() {
-  const now = Date.now();
-  const minute = Math.floor(now / 60000) * 60000;
+  const minute = Math.floor(Date.now() / 60000) * 60000 - 120000;
   const rules = [
     "HIGH_VALUE",
     "VELOCITY",
@@ -189,67 +255,104 @@ function sampleData() {
     "VELOCITY",
     "HIGH_VALUE",
   ];
-  const accounts = [
-    "acc_8f21",
-    "acc_4d09",
-    "acc_7a32",
-    "acc_2c85",
-    "acc_9b16",
-    "acc_5e43",
-  ];
-  const alerts = rules.map((rule, i) => ({
-    id: `sample_${i}`,
-    transactionId: `txn_sample_${1000 + i}`,
-    accountId: accounts[i],
-    rule,
-    severity: rule === "VELOCITY" ? "MEDIUM" : "HIGH",
-    score: rule === "VELOCITY" ? 65 : rule === "CARD_TESTING" ? 90 : 80,
-    currency: "USD",
-    amountMinor: [894200, null, null, 1267000, null, 648000][i],
-    eventTime: new Date(now - i * 42000).toISOString(),
-    createdAt: new Date(now - i * 42000).toISOString(),
-    status: ["OPEN", "INVESTIGATING", "OPEN", "RESOLVED", "OPEN", "OPEN"][i],
-    reasons: [
-      rule === "HIGH_VALUE"
-        ? "Transaction amount exceeds the illustrative 500,000 minor-unit threshold."
-        : rule === "VELOCITY"
-          ? "At least five distinct transactions occurred in a one-minute account window."
-          : "At least five transactions of 1,000 minor units or less occurred in one minute.",
-    ],
-  }));
-  const windows = [
-    138, 152, 117, 176, 158, 196, 182, 163, 217, 188, 232, 204,
-  ].map((count, i) => ({
-    id: `window_${i}`,
-    accountId: accounts[i % 6],
-    currency: "USD",
-    windowStart: new Date(minute - (11 - i) * 60000).toISOString(),
-    windowEnd: new Date(minute - (10 - i) * 60000).toISOString(),
-    transactionCount: count,
-    totalAmountMinor: count * 23700,
-    highValueCount: [7, 12, 5, 15, 13, 23, 18, 14, 25, 17, 28, 19][i],
-  }));
-  const transactions = Array.from({ length: 20 }, (_, i) => ({
-    transactionId: `txn_sample_${1020 - i}`,
-    accountId: accounts[i % 6],
-    merchantId: `merchant_${(i % 4) + 1}`,
-    amountMinor: 12740 + ((i * 7919) % 900000),
-    currency: "USD",
-    country: "US",
-    channel: ["WEB", "MOBILE", "POS"][i % 3],
-    eventTime: new Date(now - i * 19000).toISOString(),
-    deliveryStatus: "SENT",
-  }));
+  const transactions = [];
+  const windows = [];
+  const alerts = rules.map((rule, index) => {
+    const accountId = `acc_sample_${index + 1}`;
+    const count = rule === "HIGH_VALUE" ? 1 : 6;
+    const records = Array.from({ length: count }, (_, n) => ({
+      transactionId: `txn_sample_${index}_${n}`,
+      accountId,
+      merchantId: `merchant_${(n % 3) + 1}`,
+      currency: "USD",
+      country: "US",
+      channel: "WEB",
+      amountMinor:
+        rule === "CARD_TESTING" ? 500 : rule === "HIGH_VALUE" ? 750000 : 12500,
+      eventTime: new Date(minute + n * 3000).toISOString(),
+      deliveryStatus: "SENT",
+    }));
+    transactions.push(...records);
+    const window = {
+      id: `window_sample_${index}`,
+      accountId,
+      currency: "USD",
+      windowStart: new Date(minute).toISOString(),
+      windowEnd: new Date(minute + 60000).toISOString(),
+      transactionCount: count,
+      totalAmountMinor: records.reduce((sum, t) => sum + t.amountMinor, 0),
+      highValueCount: rule === "HIGH_VALUE" ? 1 : 0,
+    };
+    windows.push(window);
+    return {
+      id: `sample_${index}`,
+      accountId,
+      rule,
+      currency: "USD",
+      severity: rule === "VELOCITY" ? "MEDIUM" : "HIGH",
+      score: rule === "VELOCITY" ? 65 : 80,
+      transactionId: rule === "HIGH_VALUE" ? records[0].transactionId : null,
+      amountMinor: rule === "HIGH_VALUE" ? records[0].amountMinor : null,
+      windowStart: window.windowStart,
+      windowEnd: window.windowEnd,
+      evidenceTransactionIds: records.map((t) => t.transactionId),
+      eventTime: records[0].eventTime,
+      createdAt: records[0].eventTime,
+      status: index === 3 ? "RESOLVED" : index === 1 ? "INVESTIGATING" : "OPEN",
+      owner: [1, 3].includes(index) ? "Sample analyst" : null,
+      version: index === 3 ? 2 : index === 1 ? 1 : 0,
+      disposition: index === 3 ? "BENIGN" : null,
+      reasons: [
+        rule === "HIGH_VALUE"
+          ? "Transaction is at least 500,000 minor units."
+          : rule === "CARD_TESTING"
+            ? "Six payments of 500 minor units occurred in one account minute."
+            : "Six distinct payments occurred in one account minute.",
+      ],
+      reviewHistory: [
+        ...([1, 3].includes(index)
+          ? [
+              {
+                action: "CLAIM",
+                status: "INVESTIGATING",
+                analyst: "Sample analyst",
+                note: "Synthetic example: claimed for merchant investigation.",
+                reviewedAt: new Date(minute + 70000).toISOString(),
+              },
+            ]
+          : []),
+        ...(index === 3
+          ? [
+              {
+                action: "RESOLVE",
+                status: "RESOLVED",
+                analyst: "Sample analyst",
+                disposition: "BENIGN",
+                note: "Synthetic example: this was a scheduled merchant payment.",
+                reviewedAt: new Date(minute + 90000).toISOString(),
+              },
+            ]
+          : []),
+      ],
+    };
+  });
   return {
     overview: {
-      transactions: 24862,
-      alerts: 142,
-      highRisk: 38,
-      volumeByCurrency: { USD: 183294720, CAD: 2987300 },
+      transactions: transactions.length,
+      alerts: alerts.length,
+      highRisk: alerts.filter(
+        (a) => a.severity === "HIGH" && a.status !== "RESOLVED",
+      ).length,
+      volumeByCurrency: {
+        USD: transactions.reduce((sum, t) => sum + t.amountMinor, 0),
+      },
       pendingDelivery: 0,
-      reviewedAlerts: 104,
+      reviewedAlerts: 2,
     },
     alerts,
+    recentAlerts: alerts,
+    sampleAlerts: alerts,
+    outcomes: outcomesFor(alerts),
     windows,
     transactions,
   };
@@ -264,7 +367,7 @@ function empty(
 
 function alertTable(alerts) {
   if (!alerts.length) return empty("No signals in this view");
-  return `<div class="table-wrap"><table><thead><tr><th>Account / signal</th><th>Risk level</th><th>Rule</th><th>Score</th><th>Event time</th><th>Status</th><th></th></tr></thead><tbody>${alerts.map((alert) => `<tr class="clickable" tabindex="0" data-alert-id="${escapeHtml(idOf(alert))}"><td><div class="account"><span class="account-icon">↗</span><span>${escapeHtml(alert.accountId)}<span class="cell-sub">${alert.amountMinor ? escapeHtml(money(alert.amountMinor, alert.currency)) : "Account activity"} · ${escapeHtml(alert.currency)}</span></span></div></td><td><span class="badge ${alert.severity === "HIGH" ? "high" : "medium"}">${escapeHtml(pretty(alert.severity))}</span></td><td>${escapeHtml(pretty(alert.rule))}</td><td>${escapeHtml(alert.score)}<span class="score-track"><i style="width:${Math.max(0, Math.min(100, Number(alert.score) || 0))}%"></i></span></td><td>${escapeHtml(time(alert.eventTime || alert.createdAt))}</td><td><span class="badge ${["OPEN", "INVESTIGATING", "RESOLVED"].includes(alert.status) ? alert.status.toLowerCase() : "open"}">${escapeHtml(pretty(alert.status || "OPEN"))}</span></td><td class="row-arrow">↗</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Account / signal</th><th>Risk level</th><th>Rule</th><th>Score</th><th>Event time</th><th>Status / owner</th><th></th></tr></thead><tbody>${alerts.map((alert) => `<tr class="clickable" tabindex="0" data-alert-id="${escapeHtml(idOf(alert))}"><td><div class="account"><span class="account-icon">↗</span><span>${escapeHtml(alert.accountId)}<span class="cell-sub">${alert.amountMinor ? escapeHtml(money(alert.amountMinor, alert.currency)) : "Account activity"} · ${escapeHtml(alert.currency)}</span></span></div></td><td><span class="badge ${alert.severity === "HIGH" ? "high" : "medium"}">${escapeHtml(pretty(alert.severity))}</span></td><td>${escapeHtml(pretty(alert.rule))}</td><td>${escapeHtml(alert.score)}<span class="score-track"><i style="width:${Math.max(0, Math.min(100, Number(alert.score) || 0))}%"></i></span></td><td>${escapeHtml(time(alert.eventTime || alert.createdAt))}</td><td><span class="badge ${["OPEN", "INVESTIGATING", "RESOLVED"].includes(alert.status) ? alert.status.toLowerCase() : "open"}">${escapeHtml(pretty(alert.status || "OPEN"))}</span><span class="cell-sub">${escapeHtml(alert.owner || "Unassigned")}</span></td><td class="row-arrow">↗</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderChart() {
@@ -335,14 +438,9 @@ function render() {
   $("#nav-alert-count").textContent = number(o.alerts);
   $("#signal-count").textContent = number(o.alerts);
   $(".metric svg").style.display = state.sample ? "" : "none";
-  $("#overview-alerts").innerHTML = alertTable(state.alerts.slice(0, 5));
-  $("#all-alerts").innerHTML = alertTable(
-    state.alerts.filter(
-      (a) =>
-        !$("#severity-filter").value ||
-        a.severity === $("#severity-filter").value,
-    ),
-  );
+  $("#overview-alerts").innerHTML = alertTable(state.recentAlerts.slice(0, 5));
+  renderQueue();
+  renderOutcomes();
   $("#transactions-table").innerHTML = state.transactions.length
     ? `<div class="table-wrap"><table><thead><tr><th>Transaction</th><th>Account</th><th>Merchant</th><th>Amount</th><th>Channel</th><th>Event time</th><th>Delivery</th></tr></thead><tbody>${state.transactions.map((t) => `<tr><td class="mono">${escapeHtml(t.transactionId)}</td><td>${escapeHtml(t.accountId)}</td><td>${escapeHtml(t.merchantId)}</td><td>${escapeHtml(money(t.amountMinor, t.currency))} ${escapeHtml(t.currency)}</td><td>${escapeHtml(t.channel)}</td><td>${escapeHtml(time(t.eventTime))}</td><td><span class="badge ${t.deliveryStatus === "SENT" ? "resolved" : "open"}">${escapeHtml(t.deliveryStatus || "PENDING")}</span></td></tr>`).join("")}</tbody></table></div>`
     : empty("Your ledger is ready");
@@ -352,6 +450,72 @@ function render() {
   renderChart();
 }
 
+function renderOutcomes() {
+  const outcomes = state.outcomes;
+  $("#rule-outcomes").innerHTML =
+    !outcomes || outcomes.unavailable
+      ? empty(
+          "Outcome counts unavailable",
+          "This captured run predates outcome tracking, or the outcome endpoint could not be loaded.",
+        )
+      : outcomes.byRule?.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Rule</th><th>Resolved</th><th>Confirmed risk</th><th>False positive</th><th>Benign</th><th>Unclassified legacy</th></tr></thead><tbody>${outcomes.byRule.map((row) => `<tr><td>${escapeHtml(pretty(row.rule))}</td><td>${number(row.resolved)}</td><td>${number(row.confirmedRisk)}</td><td>${number(row.falsePositive)}</td><td>${number(row.benign)}</td><td>${number(row.unclassified)}</td></tr>`).join("")}</tbody></table></div>`
+        : empty(
+            "No outcomes recorded",
+            "Resolve an owned investigation with a disposition to record its operational outcome.",
+          );
+}
+
+function queueQuery() {
+  const params = new URLSearchParams({ limit: hostedSnapshot ? "200" : "25" });
+  for (const field of ["status", "owner", "severity"]) {
+    const value = $(`#${field}-filter`).value.trim();
+    if (value) params.set(field, value);
+  }
+  if (state.cursor) params.set("cursor", state.cursor);
+  return params;
+}
+function renderQueue() {
+  $("#all-alerts").innerHTML = alertTable(state.alerts);
+  $("#queue-summary").textContent =
+    `Page ${state.previousCursors.length + 1} · ${number(state.alerts.length)} signals${hostedSnapshot && !state.sample ? " in captured records" : ""}`;
+  $("#queue-previous").disabled = !state.previousCursors.length;
+  $("#queue-next").disabled = !state.nextCursor;
+}
+let queueEpoch = 0;
+async function refreshQueue(reset = false) {
+  if (reset) {
+    state.cursor = null;
+    state.previousCursors = [];
+  }
+  const epoch = ++queueEpoch;
+  try {
+    let page;
+    if (state.sample) {
+      const params = queueQuery();
+      const filtered = (state.sampleAlerts || []).filter((a) =>
+        ["status", "owner", "severity"].every(
+          (field) => !params.get(field) || a[field] === params.get(field),
+        ),
+      );
+      const offset = Number(state.cursor) || 0;
+      const limit = Number(params.get("limit"));
+      page = {
+        items: filtered.slice(offset, offset + limit),
+        nextCursor:
+          offset + limit < filtered.length ? String(offset + limit) : null,
+      };
+    } else page = await request(`/alerts?${queueQuery()}`);
+    if (epoch !== queueEpoch) return;
+    state.alerts = page.items || [];
+    state.nextCursor = page.nextCursor || null;
+    renderQueue();
+  } catch (error) {
+    if (epoch !== queueEpoch) return;
+    toast(`Queue could not be refreshed: ${error.message}`);
+  }
+}
+
 let refreshEpoch = 0;
 async function refresh() {
   const epoch = ++refreshEpoch;
@@ -359,7 +523,8 @@ async function refresh() {
     const readOnly = !state.sample;
     [
       "#save-review",
-      "#review-status",
+      "#review-action",
+      "#review-disposition",
       "#review-note",
       "#review-analyst",
       "#simulate-button",
@@ -367,6 +532,7 @@ async function refresh() {
       $(selector).disabled = readOnly;
     });
     $("#settings-button").hidden = true;
+    $('#mobile-view option[value="settings"]').hidden = true;
     $("#simulate-button").title = readOnly
       ? "Run the full stack to submit transactions."
       : "Explore the sample workspace";
@@ -379,16 +545,18 @@ async function refresh() {
     $("#transactions-view .panel-heading p").textContent = readOnly
       ? "Up to 200 immutable transaction records captured from the verified run."
       : "Illustrative transaction records for exploring the workspace.";
-    $(".review-actions .dialog-hint").textContent = readOnly
+    $("#review-access-hint").textContent = readOnly
       ? "Captured decisions are read-only. Turn on Sample data to try a review locally."
-      : "A note and operator label are required. Sample reviews stay in this tab and reset on refresh.";
+      : "A note and operator label are required. Sample reviews stay in this tab and reset on page reload.";
     $("#scenario-dialog h2").textContent = "Explore pipeline scenarios.";
     $("#scenario-dialog > p").textContent =
       "These scenarios are available in the full application. This hosted preview displays captured results and does not submit transactions.";
     $("#send-scenario").textContent = "How to run this scenario →";
   }
   if (state.sample) {
-    Object.assign(state, sampleData());
+    if (!state.sampleAlerts) Object.assign(state, sampleData());
+    state.outcomes = outcomesFor(state.sampleAlerts);
+    await refreshQueue();
     $("#connection").className = "connection sample";
     $("#connection").innerHTML = "<i></i> Sample workspace";
     $("#notice").textContent =
@@ -403,19 +571,24 @@ async function refresh() {
     return;
   }
   try {
-    const [overview, alerts, transactions, windows] = await Promise.all([
-      request("/overview"),
-      request(`/alerts?limit=${hostedSnapshot ? 200 : 100}`),
-      request(`/transactions?limit=${hostedSnapshot ? 200 : 100}`),
-      request(`/windows?limit=${hostedSnapshot ? 200 : 100}`),
-    ]);
+    const [overview, recent, transactions, windows, outcomes] =
+      await Promise.all([
+        request("/overview"),
+        request("/alerts?limit=5"),
+        request(`/transactions?limit=${hostedSnapshot ? 200 : 100}`),
+        request(`/windows?limit=${hostedSnapshot ? 200 : 100}`),
+        request("/outcomes").catch(() => ({ unavailable: true })),
+      ]);
     if (epoch !== refreshEpoch) return;
     Object.assign(state, {
       overview,
-      alerts: alerts.items || [],
+      recentAlerts: recent.items || [],
+      outcomes,
       transactions: transactions.items || [],
       windows: windows.items || [],
     });
+    await refreshQueue();
+    if (epoch !== refreshEpoch) return;
     if (hostedSnapshot) {
       const snapshot = await loadSnapshot();
       if (epoch !== refreshEpoch) return;
@@ -447,108 +620,258 @@ async function refresh() {
   }
 }
 
-async function openAlert(id) {
-  const alert = state.alerts.find((item) => idOf(item) === id);
-  if (!alert) return;
-  state.selected = id;
-  $("#detail-title").textContent = pretty(alert.rule);
+function updateReviewControls() {
+  const detail = state.detail;
+  const readOnly = hostedSnapshot && !state.sample;
+  const analyst = $("#review-analyst").value.trim();
+  const owned = detail?.owner && detail.owner === analyst;
+  const status = detail?.status || "OPEN";
+  const allowed =
+    ["OPEN", "INVESTIGATING"].includes(status) && !detail?.owner
+      ? ["CLAIM"]
+      : status === "RESOLVED"
+        ? ["REOPEN"]
+        : owned
+          ? ["COMMENT", "RELEASE", "RESOLVE"]
+          : [];
+  const action = $("#review-action");
+  for (const option of action.options)
+    option.disabled = !allowed.includes(option.value);
+  if (!allowed.includes(action.value)) action.value = allowed[0] || "";
+  action.disabled = readOnly || !detail || state.saving || !allowed.length;
+  $("#disposition-field").hidden = action.value !== "RESOLVE";
+  for (const selector of [
+    "#review-note",
+    "#review-analyst",
+    "#review-disposition",
+  ])
+    $(selector).disabled = readOnly || state.saving;
+  $("#save-review").disabled =
+    readOnly || !detail || state.saving || !allowed.includes(action.value);
+  $("#save-review").textContent = state.saving
+    ? "Saving…"
+    : "Save action & note";
+  $("#review-status").value = status;
+  $("#review-ownership").textContent = detail
+    ? `Owner: ${detail.owner || "Unassigned"} · Version ${detail.version || 0}${detail.disposition ? ` · Outcome: ${pretty(detail.disposition)}` : ""}. ${readOnly ? "Captured record; actions are read-only." : status === "INVESTIGATING" && !owned ? "Only the current owner can add notes, release, or resolve this investigation." : "Every action requires a note and is checked against the current version."}`
+    : "Loading the current ownership and version…";
+}
+
+function renderDetail(detail) {
+  state.detail = detail;
+  $("#detail-title").textContent = pretty(detail.rule);
   const fields = [
-    ["Account", alert.accountId],
-    ["Severity / score", `${alert.severity} / ${alert.score}`],
-    ["Currency", alert.currency],
+    ["Account", detail.accountId],
+    ["Severity / score", `${detail.severity} / ${detail.score}`],
+    ["Currency", detail.currency],
     [
       "Event time",
-      new Date(alert.eventTime || alert.createdAt).toLocaleString(),
+      new Date(detail.eventTime || detail.createdAt).toLocaleString(),
     ],
-    ["Transaction", alert.transactionId || "Window-level signal"],
-    ["Alert ID", idOf(alert)],
+    ["Transaction", detail.transactionId || "Window-level signal"],
+    ["Alert ID", idOf(detail)],
   ];
   $("#detail-content").innerHTML =
-    `<div class="detail-grid">${fields.map(([label, value]) => `<div><small>${label}</small><span>${escapeHtml(value)}</span></div>`).join("")}</div><h3>Why it was flagged</h3><ul class="detail-reasons">${(alert.reasons || []).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`;
-  $("#review-status").value = alert.status || "OPEN";
+    `<div class="detail-grid">${fields.map(([label, value]) => `<div><small>${label}</small><span>${escapeHtml(value)}</span></div>`).join("")}</div><h3>Why it was flagged</h3><ul class="detail-reasons">${(detail.reasons || []).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`;
+  $("#detail-history").innerHTML = detail.reviewHistory?.length
+    ? `<ol class="review-history">${[...detail.reviewHistory]
+        .reverse()
+        .map(
+          (entry) =>
+            `<li><div><strong>${escapeHtml(pretty(entry.action || entry.status))}${entry.disposition ? ` · ${escapeHtml(pretty(entry.disposition))}` : ""}</strong><span>${escapeHtml(entry.analyst)} · ${escapeHtml(time(entry.reviewedAt))}</span></div><p>${escapeHtml(entry.note)}</p></li>`,
+        )
+        .join("")}</ol>`
+    : '<p class="dialog-hint">No review recorded yet.</p>';
+  updateReviewControls();
+}
+
+function renderEvidence(evidence) {
+  const pinned = evidence.provenance === "PINNED_DETECTION";
+  const warnings = [];
+  if (!pinned)
+    warnings.push(
+      "Legacy contextual evidence: these records were looked up after detection. They are not a pinned list of events used by the rule.",
+    );
+  if (evidence.truncated)
+    warnings.push(
+      "Evidence is truncated: this is only part of the detection evidence. Do not infer completeness from this list.",
+    );
+  if (evidence.missingCount)
+    warnings.push(
+      `${number(evidence.missingCount)} pinned transaction(s) are missing from the API ledger.`,
+    );
+  if (
+    pinned &&
+    !evidence.complete &&
+    !evidence.truncated &&
+    !evidence.missingCount
+  )
+    warnings.push("Evidence completeness could not be established.");
+  const summary = pinned
+    ? `Pinned detection evidence · ${number(evidence.items?.length)} shown / ${number(evidence.evidenceCount)} detected · ${number(evidence.matchedCount)} available in ledger${evidence.complete ? " · Complete" : " · Incomplete"}`
+    : "Contextual transaction records · Exact detection membership unavailable";
+  $("#detail-evidence").innerHTML =
+    `<p class="dialog-hint">${escapeHtml(summary)}</p>${warnings.map((warning) => `<p class="evidence-warning">${escapeHtml(warning)}</p>`).join("")}` +
+    (evidence.items?.length
+      ? `<div class="evidence-list">${evidence.items.map((t) => `<div><span class="mono">${escapeHtml(t.transactionId)}</span><strong>${escapeHtml(money(t.amountMinor, t.currency))} ${escapeHtml(t.currency)}</strong><small>${escapeHtml(time(t.eventTime))} · ${escapeHtml(t.merchantId)}</small></div>`).join("")}</div>`
+      : '<p class="dialog-hint">No API ledger transactions are available for this signal. Events sent directly to Kafka may have no API ledger entry.</p>');
+}
+
+let detailEpoch = 0;
+async function openAlert(id) {
+  const alert = [...state.alerts, ...state.recentAlerts].find(
+    (item) => idOf(item) === id,
+  );
+  if (!alert) return;
+  const epoch = ++detailEpoch;
+  state.selected = id;
+  state.detail = null;
+  state.pendingOperation = null;
   $("#review-analyst").value =
     sessionStorage.getItem("pulseguard-operator") || "";
   $("#review-note").value = "";
-  $("#detail-evidence").textContent = "Loading related transactions…";
+  $("#review-disposition").value = "";
+  $("#review-conflict").hidden = true;
+  $("#detail-title").textContent = pretty(alert.rule);
+  $("#detail-content").textContent = "Loading current signal…";
+  $("#detail-evidence").textContent = "Loading detection evidence…";
   $("#detail-history").textContent = "Loading review history…";
+  updateReviewControls();
   $("#detail-dialog").showModal();
   try {
     const [detail, evidence] = state.sample
       ? [
-          { ...alert, reviewHistory: alert.reviewHistory || [] },
+          alert,
           {
-            items: state.transactions
-              .filter((t) => t.accountId === alert.accountId)
-              .slice(0, 4),
+            items: state.transactions.filter((t) =>
+              alert.evidenceTransactionIds.includes(t.transactionId),
+            ),
+            provenance: "PINNED_DETECTION",
+            evidenceCount: alert.evidenceTransactionIds.length,
+            matchedCount: alert.evidenceTransactionIds.length,
+            missingCount: 0,
+            truncated: false,
+            complete: true,
           },
         ]
       : await Promise.all([
           request(`/alerts/${encodeURIComponent(id)}`),
           request(`/alerts/${encodeURIComponent(id)}/evidence`),
         ]);
-    if (state.selected !== id) return;
-    $("#detail-evidence").innerHTML = evidence.items?.length
-      ? `<div class="evidence-list">${evidence.items.map((t) => `<div><span class="mono">${escapeHtml(t.transactionId)}</span><strong>${escapeHtml(money(t.amountMinor, t.currency))} ${escapeHtml(t.currency)}</strong><small>${escapeHtml(time(t.eventTime))} · ${escapeHtml(t.merchantId)}</small></div>`).join("")}</div><p class="dialog-hint">${state.sample ? "Illustrative account records." : "Up to 200 original transactions matching this signal; earliest event time first."}</p>`
-      : '<p class="dialog-hint">No ingested transaction evidence found. Records published directly to Kafka may not have an API ledger entry.</p>';
-    $("#detail-history").innerHTML = detail.reviewHistory?.length
-      ? `<ol class="review-history">${[...detail.reviewHistory]
-          .reverse()
-          .map(
-            (entry) =>
-              `<li><div><strong>${escapeHtml(pretty(entry.status))}</strong><span>${escapeHtml(entry.analyst)} · ${escapeHtml(time(entry.reviewedAt))}</span></div><p>${escapeHtml(entry.note)}</p></li>`,
-          )
-          .join("")}</ol>`
-      : '<p class="dialog-hint">No review recorded yet.</p>';
+    if (epoch !== detailEpoch) return;
+    renderDetail(detail);
+    renderEvidence(evidence);
   } catch (error) {
-    if (state.selected !== id) return;
+    if (epoch !== detailEpoch) return;
     $("#detail-evidence").textContent =
-      `Evidence could not be loaded: ${error.message}`;
+      `Details could not be loaded: ${error.message}`;
     $("#detail-history").textContent =
-      "History unavailable until the API responds.";
+      "Actions remain disabled until the current record loads.";
   }
 }
 
+function sampleReview(review) {
+  const alert = state.sampleAlerts.find((a) => idOf(a) === state.selected);
+  const status = {
+    CLAIM: "INVESTIGATING",
+    COMMENT: "INVESTIGATING",
+    RELEASE: "OPEN",
+    RESOLVE: "RESOLVED",
+    REOPEN: "INVESTIGATING",
+  }[review.action];
+  const at = new Date().toISOString();
+  Object.assign(alert, {
+    status,
+    version: (alert.version || 0) + 1,
+    owner: review.action === "RELEASE" ? null : review.analyst,
+    disposition: review.action === "RESOLVE" ? review.disposition : null,
+    resolvedAt: review.action === "RESOLVE" ? at : null,
+  });
+  (alert.reviewHistory ||= []).push({ ...review, status, reviewedAt: at });
+  state.overview.highRisk = state.sampleAlerts.filter(
+    (a) => a.severity === "HIGH" && a.status !== "RESOLVED",
+  ).length;
+  state.outcomes = outcomesFor(state.sampleAlerts);
+  return alert;
+}
+
 async function saveReview() {
-  if (hostedSnapshot && !state.sample) {
-    toast(
-      "The verified snapshot is read-only. Turn on Sample data to try local review actions.",
-    );
+  if ((hostedSnapshot && !state.sample) || state.saving || !state.detail)
     return;
-  }
-  const status = $("#review-status").value;
+  const action = $("#review-action").value;
+  if (!action || $("#review-action").selectedOptions[0]?.disabled) return;
   const note = $("#review-note").value.trim();
   const analyst = $("#review-analyst").value.trim();
+  const disposition = $("#review-disposition").value;
   if (note.length < 3 || analyst.length < 2) {
     toast("Add an operator label and a decision note before saving.");
     return;
   }
-  const review = { status, note, analyst };
+  if (action === "RESOLVE" && !disposition) {
+    toast("Choose a resolution outcome before resolving.");
+    return;
+  }
+  const command = {
+    action,
+    note,
+    analyst,
+    expectedVersion: state.detail.version || 0,
+    ...(action === "RESOLVE" ? { disposition } : {}),
+  };
+  const fingerprint = JSON.stringify(command);
+  if (state.pendingOperation?.fingerprint !== fingerprint)
+    state.pendingOperation = { fingerprint, operationId: crypto.randomUUID() };
+  const review = {
+    ...command,
+    operationId: state.pendingOperation.operationId,
+  };
+  const id = state.selected;
+  const epoch = detailEpoch;
+  state.saving = true;
+  updateReviewControls();
   try {
-    if (!state.sample)
-      await request(`/alerts/${encodeURIComponent(state.selected)}/review`, {
-        method: "PATCH",
-        body: JSON.stringify(review),
-      });
-    sessionStorage.setItem("pulseguard-operator", analyst);
-    const alert = state.alerts.find((item) => idOf(item) === state.selected);
-    if (alert) {
-      alert.status = status;
-      if (state.sample)
-        (alert.reviewHistory ||= []).push({
-          ...review,
-          reviewedAt: new Date().toISOString(),
+    const updated = state.sample
+      ? sampleReview(review)
+      : await request(`/alerts/${encodeURIComponent(id)}/review`, {
+          method: "PATCH",
+          body: JSON.stringify(review),
         });
-    }
-    $("#detail-dialog").close();
-    render();
+    if (epoch !== detailEpoch) return;
+    sessionStorage.setItem("pulseguard-operator", analyst);
+    state.pendingOperation = null;
+    $("#review-note").value = "";
+    $("#review-disposition").value = "";
+    $("#review-conflict").hidden = true;
+    renderDetail(updated);
     toast(
       state.sample
-        ? "Sample review updated locally; it resets on refresh."
-        : "Review saved. Replay will preserve this decision.",
+        ? "Sample action saved in this tab; resets on page reload."
+        : "Action saved with a versioned audit record.",
     );
-    if (!state.sample) await refresh();
+    await refresh();
   } catch (error) {
-    toast(error.message);
+    if (epoch !== detailEpoch) return;
+    if (error.status === 409) {
+      state.pendingOperation = null;
+      $("#review-conflict").textContent =
+        "This signal changed or this action is no longer allowed. Your note is preserved. Check the latest owner and version before submitting again.";
+      $("#review-conflict").hidden = false;
+      // Preserve the analyst's draft while refreshing the record used for the next command.
+      state.detail = null;
+      try {
+        const latest = await request(`/alerts/${encodeURIComponent(id)}`);
+        if (epoch === detailEpoch) renderDetail(latest);
+      } catch (refreshError) {
+        $("#review-conflict").textContent +=
+          ` Latest record could not load: ${refreshError.message}. Reopen the signal before retrying.`;
+      }
+    } else
+      toast(
+        `${error.message} Your note is preserved; retrying the same action reuses its operation ID.`,
+      );
+  } finally {
+    state.saving = false;
+    if (epoch === detailEpoch) updateReviewControls();
   }
 }
 
@@ -629,20 +952,63 @@ document.addEventListener("keydown", (event) => {
 });
 $("#sample-toggle").checked = state.sample;
 $("#sample-toggle").addEventListener("change", () => {
+  ++detailEpoch;
+  ++queueEpoch;
+  state.selected = null;
+  state.detail = null;
+  state.pendingOperation = null;
+  $("#detail-dialog").close();
   state.sample = $("#sample-toggle").checked;
   Object.assign(state, {
     overview: {},
     alerts: [],
+    recentAlerts: [],
+    sampleAlerts: null,
+    outcomes: null,
+    cursor: null,
+    nextCursor: null,
+    previousCursors: [],
     windows: [],
     transactions: [],
   });
   render();
   refresh();
 });
-$("#severity-filter").addEventListener("change", render);
+$("#severity-filter").addEventListener("change", () => refreshQueue(true));
+$("#status-filter").addEventListener("change", () => refreshQueue(true));
+$("#apply-filters").addEventListener("click", () => refreshQueue(true));
+$("#owner-filter").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") refreshQueue(true);
+});
+$("#queue-refresh").addEventListener("click", () => refreshQueue(true));
+$("#queue-next").addEventListener("click", () => {
+  if (!state.nextCursor) return;
+  state.previousCursors.push(state.cursor);
+  state.cursor = state.nextCursor;
+  refreshQueue();
+});
+$("#queue-previous").addEventListener("click", () => {
+  if (!state.previousCursors.length) return;
+  state.cursor = state.previousCursors.pop();
+  refreshQueue();
+});
+$("#review-analyst").addEventListener("input", updateReviewControls);
+$("#review-action").addEventListener("change", updateReviewControls);
+$("#detail-dialog").addEventListener("close", () => {
+  ++detailEpoch;
+  state.selected = null;
+  state.detail = null;
+});
 $("#settings-button").addEventListener("click", () => {
   $("#api-key").value = sessionStorage.getItem(keyName) || "";
   $("#settings-dialog").showModal();
+});
+$("#mobile-view").addEventListener("change", () => {
+  const view = $("#mobile-view").value;
+  if (view === "settings") {
+    if (!hostedSnapshot) $("#settings-button").click();
+    $("#mobile-view").value = $(".view.active").id.replace("-view", "");
+  } else switchView(view);
 });
 $("#save-settings").addEventListener("click", () => {
   sessionStorage.setItem(keyName, $("#api-key").value.trim());

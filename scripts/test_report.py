@@ -6,7 +6,7 @@ Exit 1: missing required evidence, malformed reports, or observed failures/error
 --allow-incomplete tolerates missing evidence only; it never suppresses a failure.
 Only TEST-*.xml contributes JUnit counts. Failsafe summaries are inspected solely
 for discovery/launcher errors, avoiding integration-test double counting.
-Required evidence: JUnit, Compose e2e, Kubernetes e2e, HTTP load, k6 thresholds,
+Required evidence: JUnit, Compose e2e, analyst scenario, Kubernetes e2e, HTTP load, k6 thresholds,
 and JaCoCo reports for both Java modules. Dashboard logs are optional.
 """
 
@@ -359,6 +359,24 @@ class Report:
             lines.append("Some k6 measurements or threshold outcomes could not be validated.")
         self.sections.append("\n".join(lines))
 
+    def analyst_workflow(self):
+        _, data = self.json_file("analyst-scenario.json")
+        lines = ["## Analyst operations scenario", "",
+                 "Synthetic payments travel through the real API, Kafka, Spark and MongoDB. "
+                 "Disposition labels are scripted analyst feedback, not independent fraud ground truth.", ""]
+        if data:
+            checks = ["pinnedEvidenceChecked", "ownershipChecked", "idempotentCommandsChecked",
+                      "staleDecisionChecked", "dispositionsChecked", "reopenChecked", "queueFiltersChecked"]
+            if data.get("status") != "passed" or any(data.get(check) is not True for check in checks):
+                self.issue("Analyst workflow did not pass every required business invariant.")
+            if sorted(data.get("concurrentClaims", [])) != [200, 409] or data.get("auditActions") != 4:
+                self.issue("Analyst workflow lacks the expected claim race or four-action audit evidence.")
+            lines += ["| Business invariant | Result |", "|---|---|"]
+            lines.extend(f"| {check} | {'PASS' if data.get(check) is True else 'FAIL'} |" for check in checks)
+            lines += ["", f"Concurrent claim HTTP results: `{data.get('concurrentClaims')}`. "
+                      f"Preserved audit actions after reopen and resolution: **{data.get('auditActions')}**."]
+        self.sections.append("\n".join(lines))
+
     def coverage(self):
         paths = self.files("jacoco.xml")
         modules = set()
@@ -425,6 +443,7 @@ class Report:
         self.java()
         self.e2e()
         self.e2e(kubernetes=True)
+        self.analyst_workflow()
         self.load()
         self.k6()
         self.dashboard()

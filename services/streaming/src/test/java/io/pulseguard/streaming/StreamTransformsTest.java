@@ -82,6 +82,29 @@ class StreamTransformsTest {
         assertEquals(1L, cad.highValueCount());
         assertEquals(1L, cad.smallAmountCount());
         assertEquals(Instant.parse("2026-01-02T03:04:00Z"), cad.windowStart());
+        assertEquals(List.of("txn1", "txn2"), cad.transactionIds());
+        assertEquals(List.of("txn2"), cad.smallAmountTransactionIds());
+    }
+
+    @Test void evidenceProjectionCapsEachRuleIndependentlyWithoutReducingAggregates() throws Exception {
+        Path file = temporary.resolve("large-window.json");
+        List<String> lines = new ArrayList<>();
+        for (int index = 204; index >= 0; index--) {
+            lines.add(JSON.writeValueAsString(event("small%03d".formatted(index), "CAD", 100, TIME)));
+        }
+        lines.add(JSON.writeValueAsString(event("large", "CAD", 500_000, TIME)));
+        Files.write(file, lines);
+        Dataset<Row> events = spark.read().schema(StreamTransforms.DECODED_SCHEMA).json(file.toString());
+        WindowSnapshot snapshot = WindowSnapshot.from(StreamTransforms.windows(events).first());
+        assertEquals(206L, snapshot.transactionCount());
+        assertEquals(205L, snapshot.smallAmountCount());
+        assertEquals(520_500L, snapshot.totalAmountMinor());
+        assertEquals(200, snapshot.transactionIds().size());
+        assertEquals("large", snapshot.transactionIds().get(0));
+        assertEquals("small198", snapshot.transactionIds().get(199));
+        assertEquals(200, snapshot.smallAmountTransactionIds().size());
+        assertEquals("small000", snapshot.smallAmountTransactionIds().get(0));
+        assertEquals("small199", snapshot.smallAmountTransactionIds().get(199));
     }
 
     @Test void streamingDeduplicatesAcrossBatchesAndCheckpointRestartThenDropsLateWindow() throws Exception {
@@ -100,6 +123,7 @@ class StreamTransformsTest {
             assertEquals(5L, snapshots.get(id).transactionCount());
             assertEquals(600L, snapshots.get(id).totalAmountMinor());
             assertEquals(2, RiskRules.windowAlerts(snapshots.get(id), TIME).size());
+            assertEquals(List.of("t1", "t2", "t3", "t4", "t5"), snapshots.get(id).transactionIds());
 
             query.stop();
             query = startWindowQuery(input, checkpoint, snapshots);
@@ -107,6 +131,7 @@ class StreamTransformsTest {
             query.processAllAvailable();
             assertEquals(6L, snapshots.get(id).transactionCount());
             assertEquals(900L, snapshots.get(id).totalAmountMinor());
+            assertEquals(List.of("t1", "t2", "t3", "t4", "t5", "t6"), snapshots.get(id).transactionIds());
 
             // A new event advances event-time. Old windows are evicted after a no-data batch.
             write(input.resolve("04.json"), event("future", "CAD", 100, TIME.plusSeconds(300)));
@@ -115,6 +140,8 @@ class StreamTransformsTest {
             query.processAllAvailable();
             assertEquals(6L, snapshots.get(id).transactionCount(), "late record must not reopen expired state");
             assertEquals(900L, snapshots.get(id).totalAmountMinor());
+            assertFalse(snapshots.get(id).transactionIds().contains("too-late"),
+                    "Stored late transactions must not become detection evidence");
         } finally {
             query.stop();
         }

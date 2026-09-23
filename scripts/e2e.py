@@ -21,11 +21,12 @@ def get_json(base_url, path):
         return json.load(response)
 
 
-def review_alert(base_url, api_key, alert_id, status):
+def review_alert(base_url, api_key, alert_id):
     path = "/api/v1/alerts/" + urllib.parse.quote(alert_id, safe="") + "/review"
     request = urllib.request.Request(
         base_url.rstrip("/") + path,
-        data=json.dumps({"status": status, "note": "Verified synthetic transaction evidence", "analyst": "e2e-analyst"}).encode(),
+        data=json.dumps({"action": "CLAIM", "expectedVersion": 0, "operationId": "e2e-" + uuid.uuid4().hex,
+                         "note": "Verified synthetic transaction evidence", "analyst": "e2e-analyst"}).encode(),
         headers={"Content-Type": "application/json", "X-API-Key": api_key}, method="PATCH")
     with urllib.request.urlopen(request, timeout=15) as response:
         return json.load(response)
@@ -101,15 +102,20 @@ def main():
             and high_evidence[0]["amountMinor"] == 600000 and high_evidence[0]["eventTime"] == timestamp,
             "HIGH_VALUE investigation returns original transaction identity, amount and event time")
     velocity_alert = next(row for row in items("alerts", card_account) if row["rule"] == "VELOCITY")
-    window_evidence = get_json(base, "/api/v1/alerts/" + urllib.parse.quote(velocity_alert["id"], safe="") + "/evidence?limit=200")["items"]
-    require({row["transactionId"] for row in window_evidence} == {event["transactionId"] for event in events[:6]}
-            and sum(row["amountMinor"] for row in window_evidence) == 3000,
-            "window investigation links exactly the six contributing original transactions")
+    evidence_page = get_json(base, "/api/v1/alerts/" + urllib.parse.quote(velocity_alert["id"], safe="") + "/evidence?limit=200")
+    window_evidence = evidence_page["items"]
+    # The alert is the first qualifying microbatch (five or six records), not the
+    # final six-event window. Its evidence must remain pinned to that detection.
+    require({row["transactionId"] for row in window_evidence}.issubset({event["transactionId"] for event in events[:6]})
+            and len(window_evidence) == velocity_alert["transactionCount"]
+            and sum(row["amountMinor"] for row in window_evidence) == velocity_alert["totalAmountMinor"]
+            and evidence_page["provenance"] == "PINNED_DETECTION" and evidence_page["complete"],
+            "window investigation links exactly the initial detection's contributing transactions")
     recovery, review_preserved, dead_letter_checked, broker_recovered = False, False, False, False
     if args.with_recovery:
         root = Path(__file__).resolve().parents[1]
         reviewed_alert = next(row for row in high_alerts if row.get("rule") == "HIGH_VALUE")
-        reviewed = review_alert(base, args.api_key, reviewed_alert["id"], "INVESTIGATING")
+        reviewed = review_alert(base, args.api_key, reviewed_alert["id"])
         require(reviewed.get("status") == "INVESTIGATING" and reviewed.get("reviewedAt"), "analyst review is persisted")
         reviewed_detail = get_json(base, high_alert_path)
         review_history = reviewed_detail["reviewHistory"]

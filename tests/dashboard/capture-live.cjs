@@ -15,15 +15,17 @@ async function exportVerifiedSnapshot(page, base) {
     if (!response.ok()) throw new Error(`Snapshot API request failed: ${endpoint} returned HTTP ${response.status()}`);
     return response.json();
   };
-  const [overview, alertPage, transactionPage, windowPage] = await Promise.all([
+  const [overview, alertPage, transactionPage, windowPage, outcomes] = await Promise.all([
     read('/api/v1/overview'), read('/api/v1/alerts?limit=200'),
     read('/api/v1/transactions?limit=200'), read('/api/v1/windows?limit=200'),
+    read('/api/v1/outcomes'),
   ]);
   if (overview.pendingDelivery !== 0 || overview.transactions < 1) {
     throw new Error('Publishable snapshots require a nonempty verified dataset and a drained durable outbox');
   }
   const details = Object.create(null);
   const evidence = Object.create(null);
+  const evidenceMetadata = Object.create(null);
   for (const alert of alertPage.items) {
     const endpoint = `/api/v1/alerts/${encodeURIComponent(alert.id)}`;
     const [detail, evidencePage] = await Promise.all([
@@ -31,6 +33,8 @@ async function exportVerifiedSnapshot(page, base) {
     ]);
     details[alert.id] = detail;
     evidence[alert.id] = evidencePage.items;
+    const { items, ...metadata } = evidencePage;
+    evidenceMetadata[alert.id] = metadata;
   }
   const snapshot = {
     schemaVersion: 1,
@@ -45,6 +49,8 @@ async function exportVerifiedSnapshot(page, base) {
     windows: windowPage.items,
     details,
     evidence,
+    evidenceMetadata,
+    outcomes,
   };
   const snapshotPath = path.resolve('artifacts/dashboard-snapshot.json');
   fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });

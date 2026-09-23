@@ -12,7 +12,8 @@ const repoRoot = path.resolve(__dirname, "../..");
 const mount = "/pulseguard/";
 const capturedAt = "2026-09-13T06:18:00Z";
 const verifiedWindowId = `acct_verified_02:USD:${Date.parse("2026-09-13T06:15:00.000Z")}`;
-const originalNote = "Verified the original transaction and retained evidence after replay.";
+const originalNote =
+  "Verified the original transaction and retained evidence after replay.";
 const originalTransaction = {
   schemaVersion: 1,
   transactionId: "tx_verified_001",
@@ -106,7 +107,11 @@ const fixture = {
         },
       ],
     },
-    [mediumAlert.id]: { ...mediumAlert, reviewHistoryCount: 0, reviewHistory: [] },
+    [mediumAlert.id]: {
+      ...mediumAlert,
+      reviewHistoryCount: 0,
+      reviewHistory: [],
+    },
   },
   evidence: { [highAlert.id]: [originalTransaction], [mediumAlert.id]: [] },
 };
@@ -121,23 +126,31 @@ function serveBuiltSite(directory, requests) {
     }
     let relative;
     try {
-      relative = decodeURIComponent(pathname.slice(mount.length)) || "index.html";
+      relative =
+        decodeURIComponent(pathname.slice(mount.length)) || "index.html";
     } catch {
       response.writeHead(400).end("Invalid path");
       return;
     }
     const target = path.resolve(directory, relative);
-    if (!target.startsWith(directory + path.sep) || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
+    if (
+      !target.startsWith(directory + path.sep) ||
+      !fs.existsSync(target) ||
+      !fs.statSync(target).isFile()
+    ) {
       response.writeHead(404).end("Not found");
       return;
     }
-    response.setHeader("Content-Type", {
-      ".html": "text/html; charset=utf-8",
-      ".css": "text/css; charset=utf-8",
-      ".js": "application/javascript; charset=utf-8",
-      ".json": "application/json; charset=utf-8",
-      ".svg": "image/svg+xml",
-    }[path.extname(target)] || "application/octet-stream");
+    response.setHeader(
+      "Content-Type",
+      {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".svg": "image/svg+xml",
+      }[path.extname(target)] || "application/octet-stream",
+    );
     fs.createReadStream(target).pipe(response);
   });
 }
@@ -150,19 +163,38 @@ async function main() {
     const snapshotFile = path.join(temporary, "verified-fixture.json");
     const output = path.join(temporary, "site");
     fs.writeFileSync(snapshotFile, JSON.stringify(fixture, null, 2));
-    execFileSync(process.env.PYTHON || (process.platform === "win32" ? "python" : "python3"), [
-      path.join(repoRoot, "scripts/build_pages.py"), "--snapshot", snapshotFile, "--output", output,
-    ], { cwd: repoRoot, stdio: "pipe" });
-    assert(fs.existsSync(path.join(output, "index.html")), "Builder must emit the Pages entry point");
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, "snapshot.json"), "utf8")), fixture,
-      "Builder must preserve the supplied verified API results");
+    execFileSync(
+      process.env.PYTHON ||
+        (process.platform === "win32" ? "python" : "python3"),
+      [
+        path.join(repoRoot, "scripts/build_pages.py"),
+        "--snapshot",
+        snapshotFile,
+        "--output",
+        output,
+      ],
+      { cwd: repoRoot, stdio: "pipe" },
+    );
+    assert(
+      fs.existsSync(path.join(output, "index.html")),
+      "Builder must emit the Pages entry point",
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(output, "snapshot.json"), "utf8")),
+      fixture,
+      "Builder must preserve the supplied verified API results",
+    );
 
     const servedRequests = [];
     server = serveBuiltSite(output, servedRequests);
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1512, height: 1100 }, locale: "en-US", timezoneId: "UTC" });
+    const page = await browser.newPage({
+      viewport: { width: 1512, height: 1100 },
+      locale: "en-US",
+      timezoneId: "UTC",
+    });
     page.setDefaultTimeout(10000);
     const errors = [];
     const apiRequests = [];
@@ -170,59 +202,152 @@ async function main() {
     const missingAssets = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("request", (request) => {
-      if (new URL(request.url()).pathname.includes("/api/v1")) apiRequests.push(request.url());
-      if (!["GET", "HEAD", "OPTIONS"].includes(request.method())) mutationRequests.push(`${request.method()} ${request.url()}`);
+      if (new URL(request.url()).pathname.includes("/api/v1"))
+        apiRequests.push(request.url());
+      if (!["GET", "HEAD", "OPTIONS"].includes(request.method()))
+        mutationRequests.push(`${request.method()} ${request.url()}`);
     });
     page.on("response", (response) => {
-      if (response.status() >= 400 && /\.(?:js|css|json|svg)$/.test(new URL(response.url()).pathname)) {
+      if (
+        response.status() >= 400 &&
+        /\.(?:js|css|json|svg)$/.test(new URL(response.url()).pathname)
+      ) {
         missingAssets.push(`${response.status()} ${response.url()}`);
       }
     });
-    await page.route("**/api/v1/**", (route) => route.fulfill({
-      status: 503, contentType: "application/json", body: '{"detail":"Pages must not call a live API"}',
-    }));
+    await page.route("**/api/v1/**", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"detail":"Pages must not call a live API"}',
+      }),
+    );
     await page.clock.install();
-    const navigation = await page.goto(`${base}${mount}`, { waitUntil: "networkidle" });
-    assert.equal(navigation.status(), 200, `Pages entry point failed: ${await page.locator("body").innerText()}`);
-    assert.equal(new URL(await page.locator("a.brand").getAttribute("href"), page.url()).pathname, mount,
-      "Brand navigation must remain inside the GitHub project path");
-    await page.waitForFunction(() => document.querySelector("#metric-transactions").textContent === "42");
-    assert.equal(await page.locator("#sample-toggle").isChecked(), false, "Pages must open the verified snapshot by default");
-    assert.match(await page.locator("#connection").textContent(), /verified run|snapshot/i);
+    const navigation = await page.goto(`${base}${mount}`, {
+      waitUntil: "networkidle",
+    });
+    assert.equal(
+      navigation.status(),
+      200,
+      `Pages entry point failed: ${await page.locator("body").innerText()}`,
+    );
+    assert.equal(
+      new URL(await page.locator("a.brand").getAttribute("href"), page.url())
+        .pathname,
+      mount,
+      "Brand navigation must remain inside the GitHub project path",
+    );
+    await page.waitForFunction(
+      () => document.querySelector("#metric-transactions").textContent === "42",
+    );
+    assert.equal(
+      await page.locator("#sample-toggle").isChecked(),
+      false,
+      "Pages must open the verified snapshot by default",
+    );
+    assert.match(
+      await page.locator("#connection").textContent(),
+      /verified run|snapshot/i,
+    );
     const notice = await page.locator("#notice").textContent();
     assert.match(notice, /snapshot/i);
-    const timestampForms = await page.evaluate((value) => [value, new Date(value).toISOString(), new Date(value).toLocaleString()], capturedAt);
-    assert(timestampForms.some((stamp) => notice.includes(stamp)), "Snapshot notice must expose its capture timestamp");
-    assert.equal(await page.locator(`#notice a[href="${fixture.runUrl}"]`).count(), 1, "Snapshot notice must link its verified source run");
-    assert.equal(await page.locator("#simulate-button").isDisabled(), true, "Captured data must not offer pipeline writes");
+    const timestampForms = await page.evaluate(
+      (value) => [
+        value,
+        new Date(value).toISOString(),
+        new Date(value).toLocaleString(),
+      ],
+      capturedAt,
+    );
+    assert(
+      timestampForms.some((stamp) => notice.includes(stamp)),
+      "Snapshot notice must expose its capture timestamp",
+    );
+    assert.equal(
+      await page.locator(`#notice a[href="${fixture.runUrl}"]`).count(),
+      1,
+      "Snapshot notice must link its verified source run",
+    );
+    assert.equal(
+      await page.locator("#simulate-button").isDisabled(),
+      true,
+      "Captured data must not offer pipeline writes",
+    );
 
     await page.locator("[data-view=alerts]").click();
     assert.equal(await page.locator("#all-alerts tbody tr").count(), 2);
     await page.locator("#severity-filter").selectOption("MEDIUM");
     assert.equal(await page.locator("#all-alerts tbody tr").count(), 1);
-    assert.match(await page.locator("#all-alerts").textContent(), /acct_verified_02/);
+    assert.match(
+      await page.locator("#all-alerts").textContent(),
+      /acct_verified_02/,
+    );
     await page.locator("#severity-filter").selectOption("HIGH");
     assert.equal(await page.locator("#all-alerts tbody tr").count(), 1);
     await page.locator("#all-alerts tbody tr").first().press("Enter");
-    await page.waitForFunction(() => document.querySelector("#detail-evidence").textContent.includes("tx_verified_001"));
-    assert.match(await page.locator("#detail-evidence").textContent(), /7,500\.00/);
-    assert.match(await page.locator("#detail-history").textContent(), /verified-ci-analyst/);
-    assert((await page.locator("#detail-history").textContent()).includes(originalNote));
-    assert.equal(await page.locator("#detail-history img").count(), 0, "Snapshot operator notes must remain escaped text");
-    assert.equal(await page.locator("#save-review").isDisabled(), true, "Snapshot reviews must be read-only");
-    assert.equal(await page.locator("#review-status").inputValue(), "INVESTIGATING");
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#detail-evidence")
+        .textContent.includes("tx_verified_001"),
+    );
+    assert.match(
+      await page.locator("#detail-evidence").textContent(),
+      /7,500\.00/,
+    );
+    assert.match(
+      await page.locator("#detail-evidence").textContent(),
+      /Legacy contextual evidence/,
+    );
+    assert.match(
+      await page.locator("#rule-outcomes").textContent(),
+      /Outcome counts unavailable/,
+    );
+    assert.match(
+      await page.locator("#detail-history").textContent(),
+      /verified-ci-analyst/,
+    );
+    assert(
+      (await page.locator("#detail-history").textContent()).includes(
+        originalNote,
+      ),
+    );
+    assert.equal(
+      await page.locator("#detail-history img").count(),
+      0,
+      "Snapshot operator notes must remain escaped text",
+    );
+    assert.equal(
+      await page.locator("#save-review").isDisabled(),
+      true,
+      "Snapshot reviews must be read-only",
+    );
+    assert.equal(
+      await page.locator("#review-status").inputValue(),
+      "INVESTIGATING",
+    );
     await page.locator("#detail-dialog .dialog-close").click();
 
     await page.locator("[data-view=transactions]").click();
-    assert.match(await page.locator("#transactions-table").textContent(), /tx_verified_001/);
+    assert.match(
+      await page.locator("#transactions-table").textContent(),
+      /tx_verified_001/,
+    );
     await page.locator("#refresh-button").click();
     await page.locator("[data-view=windows]").click();
-    assert.match(await page.locator("#windows-table").textContent(), /acct_verified_02/);
+    assert.match(
+      await page.locator("#windows-table").textContent(),
+      /acct_verified_02/,
+    );
     await page.clock.fastForward(6000);
-    assert.equal(await page.locator("#metric-transactions").textContent(), "42");
+    assert.equal(
+      await page.locator("#metric-transactions").textContent(),
+      "42",
+    );
 
     await page.locator("#sample-toggle").check();
-    await page.waitForFunction(() => document.querySelector("#metric-transactions").textContent === "24,862");
+    await page.waitForFunction(
+      () => document.querySelector("#metric-transactions").textContent === "21",
+    );
     assert.match(await page.locator("#notice").textContent(), /sample/i);
     assert.equal(await page.locator("#simulate-button").isDisabled(), false);
     await page.locator("[data-view=alerts]").click();
@@ -230,51 +355,184 @@ async function main() {
     const sampleId = await sampleRow.getAttribute("data-alert-id");
     await sampleRow.click();
     assert.equal(await page.locator("#save-review").isDisabled(), false);
-    await page.locator("#review-status").selectOption("RESOLVED");
     await page.locator("#review-analyst").fill("Local sample operator");
-    await page.locator("#review-note").fill("This local sample decision must never alter the verified snapshot.");
+    await page
+      .locator("#review-note")
+      .fill("Claiming this sample investigation locally.");
     await page.locator("#save-review").click();
-    await page.waitForFunction(() => !document.querySelector("#detail-dialog").open);
-    assert.match(await page.locator(`#all-alerts [data-alert-id="${sampleId}"]`).textContent(), /Resolved/);
+    await page.waitForFunction(
+      () => document.querySelector("#review-note").value === "",
+    );
+    await page.locator("#review-action").selectOption("RESOLVE");
+    await page.locator("#review-disposition").selectOption("CONFIRMED_RISK");
+    await page
+      .locator("#review-note")
+      .fill(
+        "This local sample decision must never alter the verified snapshot.",
+      );
+    await page.locator("#save-review").click();
+    await page.waitForFunction(
+      () => document.querySelector("#review-status").value === "RESOLVED",
+    );
+    await page.locator("#detail-dialog .dialog-close").click();
+    assert.match(
+      await page
+        .locator(`#all-alerts [data-alert-id="${sampleId}"]`)
+        .textContent(),
+      /Resolved/,
+    );
     await page.locator(`#all-alerts [data-alert-id="${sampleId}"]`).click();
-    assert.match(await page.locator("#detail-history").textContent(), /local sample decision/);
+    assert.match(
+      await page.locator("#detail-history").textContent(),
+      /local sample decision/,
+    );
     await page.locator("#detail-dialog .dialog-close").click();
     await page.locator("#simulate-button").click();
     await page.locator("#scenario-select").selectOption("card-testing");
     await page.locator("#send-scenario").click();
-    await page.waitForFunction(() => document.querySelector("#scenario-result").textContent.length > 0);
-    assert.match(await page.locator("#scenario-result").textContent(), /sample|local|illustrative|preview|connect/i);
+    await page.waitForFunction(
+      () => document.querySelector("#scenario-result").textContent.length > 0,
+    );
+    assert.match(
+      await page.locator("#scenario-result").textContent(),
+      /sample|local|illustrative|preview|connect/i,
+    );
     await page.locator("#scenario-dialog .dialog-close").click();
 
     await page.locator("#sample-toggle").uncheck();
-    await page.waitForFunction(() => document.querySelector("#metric-transactions").textContent === "42");
+    await page.waitForFunction(
+      () => document.querySelector("#metric-transactions").textContent === "42",
+    );
     assert.match(await page.locator("#notice").textContent(), /snapshot/i);
     assert.equal(await page.locator("#simulate-button").isDisabled(), true);
     await page.locator("#all-alerts tbody tr").first().click();
-    await page.waitForFunction(() => document.querySelector("#detail-history").textContent.includes("verified-ci-analyst"));
-    assert.equal(await page.locator("#review-status").inputValue(), "INVESTIGATING", "Returning from sample mode must restore the original decision");
-    assert.equal(await page.locator("#detail-history .review-history li").count(), 2);
-    assert((await page.locator("#detail-history").textContent()).includes(originalNote));
-    assert.doesNotMatch(await page.locator("#detail-history").textContent(), /local sample decision/);
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#detail-history")
+        .textContent.includes("verified-ci-analyst"),
+    );
+    assert.equal(
+      await page.locator("#review-status").inputValue(),
+      "INVESTIGATING",
+      "Returning from sample mode must restore the original decision",
+    );
+    assert.equal(
+      await page.locator("#detail-history .review-history li").count(),
+      2,
+    );
+    assert(
+      (await page.locator("#detail-history").textContent()).includes(
+        originalNote,
+      ),
+    );
+    assert.doesNotMatch(
+      await page.locator("#detail-history").textContent(),
+      /local sample decision/,
+    );
     assert.equal(await page.locator("#save-review").isDisabled(), true);
     await page.locator("#detail-dialog .dialog-close").click();
     await page.locator("[data-view=overview]").click();
     await page.setViewportSize({ width: 390, height: 844 });
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Pages snapshot must fit a mobile viewport");
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      "Pages snapshot must fit a mobile viewport",
+    );
 
-    assert.deepEqual(apiRequests, [], "Pages browsing, auto-refresh, and local samples must never request a live API");
-    assert.deepEqual(mutationRequests, [], "Pages must never send remote mutations");
-    assert.deepEqual(missingAssets, [], "Assets must resolve below the GitHub project path");
-    assert(servedRequests.some((request) => request.pathname === `${mount}snapshot.json`), "Runtime must load the built snapshot below /pulseguard/");
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, "snapshot.json"), "utf8")), fixture);
+    const enriched = {
+      ...fixture,
+      evidenceMetadata: {
+        [highAlert.id]: {
+          provenance: "PINNED_DETECTION",
+          evidenceCount: 1,
+          matchedCount: 1,
+          missingCount: 0,
+          truncated: false,
+          complete: true,
+        },
+      },
+      outcomes: {
+        resolvedAlerts: 1,
+        byRule: [
+          {
+            rule: "HIGH_VALUE",
+            resolved: 1,
+            confirmedRisk: 1,
+            falsePositive: 0,
+            benign: 0,
+          },
+        ],
+      },
+    };
+    fs.writeFileSync(
+      path.join(output, "snapshot.json"),
+      JSON.stringify(enriched),
+    );
+    await page.setViewportSize({ width: 1512, height: 1100 });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator("[data-view=alerts]").click();
+    await page.locator("#all-alerts tbody tr").first().click();
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#detail-evidence")
+        .textContent.includes("Pinned detection evidence"),
+    );
+    assert.match(
+      await page.locator("#detail-evidence").textContent(),
+      /1 shown \/ 1 detected.*Complete/,
+    );
+    assert.doesNotMatch(
+      await page.locator("#detail-evidence").textContent(),
+      /Legacy contextual/,
+    );
+    assert.match(
+      await page.locator("#rule-outcomes").textContent(),
+      /High Value/,
+    );
+    assert.equal(await page.locator("#save-review").isDisabled(), true);
+    fs.writeFileSync(
+      path.join(output, "snapshot.json"),
+      JSON.stringify(fixture),
+    );
+
+    assert.deepEqual(
+      apiRequests,
+      [],
+      "Pages browsing, auto-refresh, and local samples must never request a live API",
+    );
+    assert.deepEqual(
+      mutationRequests,
+      [],
+      "Pages must never send remote mutations",
+    );
+    assert.deepEqual(
+      missingAssets,
+      [],
+      "Assets must resolve below the GitHub project path",
+    );
+    assert(
+      servedRequests.some(
+        (request) => request.pathname === `${mount}snapshot.json`,
+      ),
+      "Runtime must load the built snapshot below /pulseguard/",
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(output, "snapshot.json"), "utf8")),
+      fixture,
+    );
     assert.deepEqual(errors, []);
-    console.log("PASS: Pages build/subpath, verified source/capture, snapshot evidence/history, filters, read-only controls, isolated sample edits, mobile, zero live API requests");
+    console.log(
+      "PASS: Pages build/subpath, verified source/capture, snapshot evidence/history, filters, read-only controls, isolated sample edits, mobile, zero live API requests",
+    );
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise((resolve) => server.close(resolve));
     const resolved = path.resolve(temporary);
-    const allowedPrefix = path.resolve(os.tmpdir()) + path.sep + "pulseguard-pages-";
-    if (!resolved.startsWith(allowedPrefix)) throw new Error("Refusing to clean an unexpected test directory");
+    const allowedPrefix =
+      path.resolve(os.tmpdir()) + path.sep + "pulseguard-pages-";
+    if (!resolved.startsWith(allowedPrefix))
+      throw new Error("Refusing to clean an unexpected test directory");
     fs.rmSync(resolved, { recursive: true, force: true });
   }
 }

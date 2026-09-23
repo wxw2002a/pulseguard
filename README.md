@@ -4,6 +4,8 @@
 
 **Real-time transaction risk analytics. Built to explain every signal and survive replay.**
 
+[中文说明](README.zh-CN.md) · [Business case and five-minute walkthrough](docs/analyst-workflow.md) · [Resume and interview notes](docs/resume.md)
+
 [![verify](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml)
 [![Kubernetes](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml)
 ![Java](https://img.shields.io/badge/Java-17-31594e)
@@ -16,6 +18,8 @@
 
 PulseGuard is an **e-commerce payment event monitoring and investigation system**. It accepts transaction events, delivers them reliably through Kafka, computes explainable risk signals with **Java Spark Structured Streaming**, and exposes a review workflow backed by MongoDB. The repository includes synthetic event generation, a live investigation dashboard, deployment manifests and automated recovery checks.
 
+The concrete user is a small payment-risk operations team: **find an actionable signal, inspect the transactions that actually triggered it, claim responsibility, and record a defensible decision without overwriting a colleague's work**. Operators can filter and page through the queue, distinguish confirmed risk from false positives, and reopen a case when new context arrives. [The business case](docs/analyst-workflow.md) explains the acceptance criteria and the limits of these outcomes.
+
 **[Open the hosted workspace](https://wxw2002a.github.io/pulseguard/)** — no local installation required. Browse a read-only snapshot of actual CI pipeline results, including alerts, original transaction evidence and recorded review history. The page identifies its capture time and source run. **Sample data** switches to separate illustrative records for trying local review actions. GitHub Pages hosts the frontend; run the full stack below to ingest events and execute Java, Kafka and Spark. [Hosting and data provenance](docs/github-pages.md).
 
 ## Problems it addresses
@@ -23,6 +27,9 @@ PulseGuard is an **e-commerce payment event monitoring and investigation system*
 - **Retried callbacks inflate payment counts:** immutable transaction IDs and conflict detection prevent a repeated callback from creating a second ledger entry; exact in-window deduplication also handles a republished Kafka event.
 - **A broker outage loses accepted work:** the transaction and outbox are committed together before HTTP acceptance. Publication can recover from an expired lease or a failed broker connection.
 - **Suspicious activity has no investigation trail:** concentrated small payments, high transaction frequency and large payments produce explainable signals. Operators can inspect the matching original transactions and record a reasoned decision with a preserved review history.
+- **Two operators silently overwrite one another:** versioned, owner-aware review commands atomically check their preconditions; a stale decision returns 409. An operation ID makes timeout retries idempotent.
+- **Evidence changes after the decision:** new alerts pin the rule-specific transaction IDs from their first detection. Later events do not enter that snapshot, and truncation or missing ledger records is explicit.
+- **Closing an alert teaches the team nothing:** resolution requires a confirmed-risk, false-positive or benign disposition. Per-rule outcome counts help investigate noisy rules without pretending to measure fraud-model accuracy.
 
 The system monitors events after they are received; it does not authorize, block, refund or move money. A payment service integrates by posting its normalized events to the ingestion API with a stable transaction ID. The included generator drives that same interface using synthetic data.
 
@@ -40,7 +47,9 @@ The system monitors events after they are received; it does not authorize, block
 | Events arrive out of order | One-minute tumbling windows with a two-minute watermark and persistent query checkpoints | [Transforms](services/streaming/src/main/java/io/pulseguard/streaming/StreamTransforms.java) |
 | Bad records poison a stream | Strict schema parsing and deterministic quarantine keyed by topic/partition/offset | [Parser](services/streaming/src/main/java/io/pulseguard/streaming/TransactionParser.java) |
 | Replay overwrites an analyst's decision | Alert creation uses `$setOnInsert`; review status and decision history survive reprocessing | [Mongo sinks](services/streaming/src/main/java/io/pulseguard/streaming/MongoSinks.java) |
-| An alert cannot be investigated | Match original transaction evidence by event ID or indexed account/currency/time window; atomically append reasoned reviews | [Investigation service](services/api/src/main/java/io/pulseguard/api/investigation/InvestigationService.java) |
+| An alert cannot be investigated | Pinned detection records with completeness metadata, contextual legacy fallback, and a reasoned decision journal | [Investigation service](services/api/src/main/java/io/pulseguard/api/investigation/InvestigationService.java) |
+| Two analysts claim or resolve the same case | Atomic expected-version check, cooperative ownership, explicit transitions and retry-safe operation IDs | [Review workflow](docs/analyst-workflow.md#review-command-contract) |
+| Late events contaminate a decision's evidence | Immutable, sorted, rule-specific detection IDs with bounded capture and explicit completeness | [Risk rules](services/streaming/src/main/java/io/pulseguard/streaming/RiskRules.java) |
 | A diagram works but the system does not | CI starts actual Kafka, MongoDB, Java and Spark; checks duplicate delivery and restart recovery | [End-to-end checks](scripts/e2e.py) |
 
 ## Architecture
@@ -77,7 +86,15 @@ python scripts/e2e.py --timeout 300
 python scripts/load_generator.py --count 120 --rate 10 --save-events artifacts/events.jsonl
 ```
 
-Open **[localhost:8080](http://localhost:8080)**. In **Connection settings**, enter `local-dev-key` (the local development default); use **Run a scenario** to send mixed traffic, a velocity burst, a high-value payment or a card-testing pattern. Select an alert to inspect its original transaction evidence, enter an operator label and decision note, and save the review. Previous decisions remain visible in its history.
+Open **[localhost:8080](http://localhost:8080)**. In **Connection settings**, enter `local-dev-key` (the local development default); use **Run a scenario** to send mixed traffic, a velocity burst, a high-value payment or a card-testing pattern. Select an alert, inspect its evidence, enter an operator label and note, and claim it. Its owner can add investigation notes, release it, or resolve it with a disposition; resolved cases can be reopened. Previous decisions remain visible in history.
+
+Run the complete operations demonstration against the same running stack:
+
+```bash
+python scripts/analyst_scenario.py --timeout 300
+```
+
+This creates isolated synthetic accounts, checks exact detection evidence, races two claim requests, verifies stale-decision and retry handling, resolves and reopens a case, and writes `artifacts/analyst-scenario.json`. The dashboard then contains actual persisted decisions from that run.
 
 | Endpoint | Purpose |
 |---|---|
@@ -119,14 +136,15 @@ Send a **current UTC eventTime** for a live demonstration; old event times may b
 |---|---|---|
 | POST | `/api/v1/transactions` | API key; `202 {transactionId,status,duplicate}`; conflicting retry `409` |
 | GET | `/api/v1/transactions?limit=100` | Recent accepted events and delivery status |
-| GET | `/api/v1/alerts?limit=100&severity=HIGH` | Risk signals, reasons and review status |
+| GET | `/api/v1/alerts?limit=100&severity=HIGH&status=OPEN` | Filtered queue, reasons and `nextCursor`; supports `owner`, `accountId` and `cursor` |
 | GET | `/api/v1/alerts/{id}` | Detail, latest 50 review entries and total review count |
-| GET | `/api/v1/alerts/{id}/evidence?limit=200` | Original transaction or matching account/currency/window transactions |
-| PATCH | `/api/v1/alerts/{id}/review` | API key; body `{"status":"INVESTIGATING","analyst":"risk-team","note":"Checking related merchant activity"}` |
+| GET | `/api/v1/alerts/{id}/evidence?limit=200` | Pinned detection records plus provenance/completeness; contextual fallback for legacy windows |
+| PATCH | `/api/v1/alerts/{id}/review` | API key; action, expectedVersion, operationId, analyst, note; RESOLVE also requires disposition |
+| GET | `/api/v1/outcomes` | Current resolved counts and per-rule analyst dispositions |
 | GET | `/api/v1/windows?limit=100` | Account/currency window snapshots |
 | GET | `/api/v1/overview` | Counts, unresolved high risk, currency-separated volumes, outbox backlog |
 
-List endpoints return `{"items":[...]}`. Percent-encode alert IDs when placing them in paths. Reviews atomically append to a bounded 500-entry history; a full history returns 409 instead of silently dropping older decisions. The operator label is self-reported, not an authenticated identity. See [the JSON Schema](contracts/transaction.v1.schema.json) and [the OpenAPI contract](contracts/openapi.yaml).
+List endpoints return `{"items":[...]}`; the alert queue additionally returns `nextCursor`. Percent-encode alert IDs when placing them in paths. Reviews atomically append to a bounded 500-entry history; a full history returns 409 instead of silently dropping older decisions. Read the current alert version before writing, and reuse the entire command after a timeout. The operator label is self-reported, not an authenticated identity. **Migration:** old status-only review requests must use the [new command contract](docs/analyst-workflow.md#review-command-contract). See [the JSON Schema](contracts/transaction.v1.schema.json) and [the OpenAPI contract](contracts/openapi.yaml).
 
 ## Risk rules
 
