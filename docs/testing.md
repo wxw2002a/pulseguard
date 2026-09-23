@@ -13,6 +13,8 @@ PulseGuard uses JUnit 5, Mockito, Spring MockMvc, Testcontainers, JaCoCo, Playwr
 | Playwright with Chromium | Browser navigation, filtering, keyboard access, review actions, escaped input, mobile layout, offline behavior, hosted snapshot isolation and asset paths | Browser log and screenshots |
 | OpenAPI Spec Validator and JSON Schema | API document validity and event-contract acceptance/rejection examples | Contract validation log |
 | Docker Compose plus end-to-end assertions | Real HTTP → Mongo outbox → Kafka → Spark → Mongo projections; malformed quarantine, duplicate replay, review preservation, Spark restart and Kafka outage/recovery | JSON scenario report, container state and full logs |
+| Analyst business scenario | Pinned rule-specific evidence after later arrivals, concurrent claims, stale/owner conflicts, operation retries, required dispositions, reopen and outcome reporting | `artifacts/analyst-scenario.json` (required by the quality gate) |
+| Browser connected to Compose | Claim and resolve through the actual UI, then verify persisted versions, journal entries, rendered evidence and outcomes | `artifacts/live-review.json` and `artifacts/analyst-live.png` (report required by the quality gate) |
 | Grafana k6 | Controlled HTTP ingestion rate, accepted event identity, error rate, dropped iterations and latency thresholds | Raw JSON metrics and JUnit threshold results |
 | kind and kubectl | Actual Kubernetes deployment, readiness, persistent volumes and a complete ingestion/investigation scenario | Scenario report, resource snapshots, events and pod logs |
 

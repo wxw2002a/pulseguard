@@ -109,6 +109,8 @@ jobs:
         run: docker compose up -d --build
       - name: Exercise rules, idempotency, conflict, and checkpoint recovery
         run: python scripts/e2e.py --with-recovery --timeout 300
+      - name: Exercise analyst claims, pinned evidence, conflicts and outcomes
+        run: python scripts/analyst_scenario.py --timeout 300
       - name: Measure synthetic HTTP ingestion
         run: python scripts/load_generator.py --count 120 --rate 20 --report artifacts/load-report.json
       - name: Enforce k6 ingestion reliability and latency thresholds

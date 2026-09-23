@@ -197,8 +197,10 @@ def check_java_compatibility(spec, transaction_schema):
                     and review["properties"][name].get("maxLength") == int(size.group(2)),
                     f"Review {name} length limits differ from Java")
     investigation_source = (JAVA / "investigation/InvestigationService.java").read_text(encoding="utf-8")
-    require(set(review["properties"]["status"]["enum"]) == enum_values(investigation_source, "ReviewStatus"),
-            "Review status enum differs from Java")
+    require(set(review["properties"]["action"]["enum"]) == enum_values(investigation_source, "ReviewAction"),
+            "Review action enum differs from Java")
+    require(set(review["properties"]["disposition"]["enum"]) - {None} == enum_values(investigation_source, "Disposition"),
+            "Review disposition enum differs from Java")
 
     view_source = (JAVA / "transaction/TransactionView.java").read_text(encoding="utf-8")
     require(set(spec["components"]["schemas"]["TransactionView"]["properties"]) == set(read_record(view_source, "TransactionView")),
@@ -267,16 +269,22 @@ def check_transaction_examples(schema):
 
 def check_review_and_acknowledgement(spec, review):
     validator = Draft202012Validator(review, format_checker=FORMATS)
-    decision = {"status": "INVESTIGATING", "note": "Checked the original transaction evidence.", "analyst": "Risk operations"}
-    for status in ("OPEN", "INVESTIGATING", "RESOLVED"):
-        accepted(validator, {**decision, "status": status}, f"review status {status}")
+    decision = {"action": "CLAIM", "expectedVersion": 0, "operationId": "contract-claim-001",
+                "note": "Checked the original transaction evidence.", "analyst": "Risk operations"}
+    for action in ("CLAIM", "COMMENT", "RELEASE", "RESOLVE", "REOPEN"):
+        command = {**decision, "action": action}
+        if action == "RESOLVE":
+            command["disposition"] = "FALSE_POSITIVE"
+        accepted(validator, command, f"review action {action}")
     count = 0
-    for field in ("status", "note", "analyst"):
+    for field in ("action", "expectedVersion", "operationId", "note", "analyst"):
         missing = deepcopy(decision)
         del missing[field]
         rejected(validator, missing, f"review missing {field}", "required")
         count += 1
-    for field, value, keyword in (("status", "IGNORED", "enum"), ("note", "", "minLength"),
+    for field, value, keyword in (("action", "IGNORED", "enum"), ("expectedVersion", -1, "minimum"),
+                                   ("expectedVersion", 1.5, "type"), ("operationId", "bad", "pattern"),
+                                   ("disposition", "FRAUD_MODEL_LABEL", "enum"), ("note", "", "minLength"),
                                    ("note", "x" * 1001, "maxLength"), ("analyst", "x", "minLength"),
                                    ("analyst", "x" * 65, "maxLength"), ("authenticatedIdentity", True, "additionalProperties")):
         rejected(validator, {**decision, field: value}, f"invalid review {field}", keyword)
@@ -287,7 +295,7 @@ def check_review_and_acknowledgement(spec, review):
         accepted(ack_validator, {"transactionId": "txn-contract", "status": "ACCEPTED", "duplicate": duplicate}, "ingestion acknowledgement")
     rejected(ack_validator, {"transactionId": "txn-contract", "status": "ACCEPTED"}, "acknowledgement without duplicate flag", "required")
     rejected(ack_validator, {"transactionId": "txn-contract", "status": "SENT", "duplicate": False}, "premature delivery acknowledgement", "const")
-    print(f"PASS review and ingestion responses: 5 valid examples and {count + 2} rejected contract violations")
+    print(f"PASS review and ingestion responses: 7 valid examples and {count + 2} rejected contract violations")
 
 
 def main():

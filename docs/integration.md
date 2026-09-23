@@ -44,12 +44,13 @@ An HTTP `202` is an ingestion acknowledgement, **not a fraud verdict**. Risk ale
 
 ## Investigate an alert
 
-1. Query `GET /api/v1/alerts` to locate the signal.
-2. Fetch `/api/v1/alerts/{id}` for reasons and review history.
-3. Fetch `/api/v1/alerts/{id}/evidence` for the original transaction or contributing account/currency/window transactions.
-4. Record a review with `PATCH /api/v1/alerts/{id}/review` and a nonempty decision note. `INVESTIGATING` can identify an active case; `RESOLVED` closes it in the unresolved high-risk count.
+1. Query `GET /api/v1/alerts` with status/owner filters and follow `nextCursor` to locate a signal.
+2. Fetch `/api/v1/alerts/{id}` for reasons, current version, owner and review history.
+3. Fetch `/api/v1/alerts/{id}/evidence`; inspect provenance, completeness and missing/truncation metadata as well as the records.
+4. Send a CLAIM command to `PATCH /api/v1/alerts/{id}/review` with `expectedVersion`, a unique `operationId`, analyst label and note. The owner may comment, release or resolve with a disposition. See [the exact command contract](analyst-workflow.md#review-command-contract).
+5. Reuse the entire command after a timeout. On 409, refresh the detail and deliberately make a new decision; never silently overwrite the current version.
 
-Window evidence is capped at 200 transactions per request. Its count may be smaller than the full aggregate in a high-volume window; the API does not currently provide an exhaustive evidence export. Window alerts preserve their first detection snapshot while the separate current window projection may continue to change as accepted events arrive.
+New alerts pin at most 200 contributing IDs from the initial detection; the response is also capped at 200. `matchedCount` is the number of available ledger matches before the response limit, `missingCount` counts absent captured IDs, and `evidenceCount` includes detection members omitted by the capture cap. Legacy window evidence is explicitly contextual. A first detection may include fewer events than the later window aggregate; the API does not provide exhaustive evidence export for large windows.
 
 ## Verify before connecting a new source
 

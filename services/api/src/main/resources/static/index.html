@@ -77,6 +77,16 @@
           ><span class="topbar-avatar">PG</span>
         </div>
       </header>
+      <nav class="mobile-navigation" aria-label="Mobile workspace navigation">
+        <select id="mobile-view" aria-label="Workspace view">
+          <option value="overview">Overview</option>
+          <option value="alerts">Alert inbox</option>
+          <option value="transactions">Transactions</option>
+          <option value="windows">Account windows</option>
+          <option value="pipeline">Pipeline</option>
+          <option value="settings">Connection settings</option>
+        </select>
+      </nav>
       <main>
         <section class="page-heading">
           <div>
@@ -223,18 +233,68 @@
             <div class="panel-heading">
               <div>
                 <h2>Alert inbox</h2>
-                <p>Inspect a signal and update its review status.</p>
+                <p>
+                  Claim a signal, inspect its evidence, and record a resolution.
+                </p>
               </div>
-              <select
-                id="severity-filter"
-                aria-label="Filter alerts by severity"
+              <button class="text-button" id="queue-refresh">
+                Refresh queue ↻
+              </button>
+            </div>
+            <div class="queue-filters">
+              <label
+                >Status<select
+                  id="status-filter"
+                  aria-label="Filter alerts by status"
+                >
+                  <option value="">All statuses</option>
+                  <option>OPEN</option>
+                  <option>INVESTIGATING</option>
+                  <option>RESOLVED</option>
+                </select></label
               >
-                <option value="">All severities</option>
-                <option>HIGH</option>
-                <option>MEDIUM</option>
-              </select>
+              <label
+                >Owner<input
+                  id="owner-filter"
+                  type="text"
+                  maxlength="64"
+                  placeholder="Exact operator label"
+                  aria-label="Filter alerts by owner"
+              /></label>
+              <label
+                >Severity
+                <select
+                  id="severity-filter"
+                  aria-label="Filter alerts by severity"
+                >
+                  <option value="">All severities</option>
+                  <option>HIGH</option>
+                  <option>MEDIUM</option>
+                </select>
+              </label>
+              <button class="text-button" id="apply-filters">
+                Apply filters
+              </button>
             </div>
             <div id="all-alerts"></div>
+            <div class="queue-pagination">
+              <span id="queue-summary" aria-live="polite"></span
+              ><button class="text-button" id="queue-previous">
+                ← Previous</button
+              ><button class="text-button" id="queue-next">Next →</button>
+            </div>
+          </article>
+          <article class="panel outcomes-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Review outcomes by rule</h2>
+                <p>
+                  Current resolved cases, grouped by analyst disposition. These
+                  labels are not measured detection accuracy.
+                </p>
+              </div>
+            </div>
+            <div id="rule-outcomes"></div>
           </article>
         </section>
         <section id="transactions-view" class="view">
@@ -353,8 +413,10 @@
         <div id="detail-history"></div>
       </section>
       <div class="review-actions">
-        <label for="review-status">Review status</label
-        ><select id="review-status">
+        <p id="review-conflict" class="notice" role="alert" hidden></p>
+        <p id="review-ownership" class="dialog-hint"></p>
+        <label for="review-status">Current status</label
+        ><select id="review-status" disabled>
           <option>OPEN</option>
           <option>INVESTIGATING</option>
           <option>RESOLVED</option></select
@@ -365,7 +427,24 @@
           minlength="2"
           maxlength="64"
           placeholder="Your name or team label"
-        /><label for="review-note">Decision note</label
+        /><label for="review-action">Next action</label
+        ><select id="review-action">
+          <option value="CLAIM">Claim for investigation</option>
+          <option value="COMMENT">Add investigation note</option>
+          <option value="RELEASE">Release to open queue</option>
+          <option value="RESOLVE">Resolve with outcome</option>
+          <option value="REOPEN">Reopen for investigation</option>
+        </select>
+        <div id="disposition-field" hidden>
+          <label for="review-disposition">Resolution outcome</label
+          ><select id="review-disposition">
+            <option value="">Choose an outcome</option>
+            <option value="CONFIRMED_RISK">Confirmed risk</option>
+            <option value="FALSE_POSITIVE">False positive</option>
+            <option value="BENIGN">Benign activity</option>
+          </select>
+        </div>
+        <label for="review-note">Decision note</label
         ><textarea
           id="review-note"
           minlength="3"
@@ -373,11 +452,11 @@
           rows="3"
           placeholder="What did you find, and what action should happen next?"
         ></textarea>
-        <p class="dialog-hint">
+        <p class="dialog-hint" id="review-access-hint">
           A note and operator label are required. The label is self-reported;
           access is authorized by the workspace API key.
         </p>
-        <button class="primary" id="save-review">Save review &amp; note</button>
+        <button class="primary" id="save-review">Save action &amp; note</button>
       </div>
     </dialog>
     <dialog id="settings-dialog">

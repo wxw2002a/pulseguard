@@ -25,6 +25,8 @@ public class MongoIndexes implements ApplicationRunner {
         mongo.indexOps("alerts").createIndex(new Index().on("createdAt", Sort.Direction.DESC).on("_id", Sort.Direction.DESC));
         mongo.indexOps("alerts").createIndex(new Index().on("accountId", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC));
         mongo.indexOps("alerts").createIndex(new Index().on("severity", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC));
+        mongo.indexOps("alerts").createIndex(new Index().on("status", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC).on("_id", Sort.Direction.DESC));
+        mongo.indexOps("alerts").createIndex(new Index().on("owner", Sort.Direction.ASC).on("status", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC).on("_id", Sort.Direction.DESC));
         mongo.indexOps("windows").createIndex(new Index().on("windowEnd", Sort.Direction.DESC).on("_id", Sort.Direction.DESC));
         mongo.indexOps("windows").createIndex(new Index().on("accountId", Sort.Direction.ASC).on("windowEnd", Sort.Direction.DESC));
     }

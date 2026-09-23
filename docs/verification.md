@@ -1,5 +1,15 @@
 # Verification record
 
+## Analyst workflow revision
+
+[PR #1](https://github.com/wxw2002a/pulseguard/pull/1) contains the versioned analyst workflow, pinned detection evidence and outcome reporting. Its **Checks** tab and **Quality gate** artifact are the source of truth for the exact reviewed revision; historical measurements below are not measurements of this revision.
+
+Local verification on 2026-09-23 UTC: 60 Java unit/MVC tests and both application JAR builds passed. A separate Linux run passed 27 streaming tests, including four actual Spark SQL/state/checkpoint tests (the other 23 overlap the local unit suite). Both Playwright suites, desktop/mobile agent-browser checks, OpenAPI/JSON Schema and Compose/Kustomize validation passed. Docker was unavailable on the Windows host; Testcontainers, the combined Compose runtime and Kubernetes are exercised in CI, not inferred from those local checks.
+
+The quality gate now also requires `analyst-scenario.json` and `live-review.json`: evidence that real pipeline-generated alerts survived concurrent claims and retries, and that browser claim/resolution actions persisted through the API. The scenario uses synthetic transactions and scripted labels, never real fraud ground truth. [Reproduction and acceptance criteria](analyst-workflow.md).
+
+## Historical baseline
+
 Observed on **2026-09-13**. All figures below come from retained CI output. The source events are synthetic; Kafka, MongoDB, Spark, the Java API, browser and Kubernetes cluster are real running components.
 
 ## Complete automated toolchain

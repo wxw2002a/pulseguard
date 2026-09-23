@@ -72,6 +72,13 @@ public final class StreamTransforms {
                         expr("CAST(size(filter(transactions, tx -> tx.amountMinor >= 500000)) AS BIGINT)")
                                 .alias("highValueCount"),
                         expr("CAST(size(filter(transactions, tx -> tx.amountMinor <= 1000)) AS BIGINT)")
-                                .alias("smallAmountCount"));
+                                .alias("smallAmountCount"),
+                        // Project evidence from the same deduplicated state as the counters. Sorting
+                        // after aggregation keeps the existing state schema/checkpoint compatible.
+                        expr("slice(sort_array(transform(transactions, tx -> tx.transactionId)), 1, "
+                                + RiskRules.MAX_EVIDENCE_TRANSACTIONS + ")").alias("transactionIds"),
+                        expr("slice(sort_array(transform(filter(transactions, tx -> tx.amountMinor <= 1000), "
+                                + "tx -> tx.transactionId)), 1, " + RiskRules.MAX_EVIDENCE_TRANSACTIONS + ")")
+                                .alias("smallAmountTransactionIds"));
     }
 }

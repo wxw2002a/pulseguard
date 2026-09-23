@@ -1,6 +1,8 @@
 package io.pulseguard.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static io.pulseguard.api.investigation.InvestigationService.*;
 import static org.awaitility.Awaitility.await;
 import java.time.Clock;
 import java.time.Duration;
@@ -174,11 +176,11 @@ class IngestionIT {
         service.accept(evidencePayload("wrong-account", "other-account", TransactionPayload.Currency.CAD, start));
         mongo.insert(new Document("_id", "VELOCITY:window").append("accountId", "acct-evidence").append("currency", "CAD")
                 .append("windowStart", Date.from(start)).append("windowEnd", Date.from(end)), "alerts");
-        assertThat(investigations.evidence("VELOCITY:window", 200)).extracting(view -> view.transactionId())
+        assertThat(investigations.evidence("VELOCITY:window", 200).items()).extracting(view -> view.transactionId())
                 .containsExactly("at-start", "last-nanosecond");
-        assertThat(investigations.evidence("VELOCITY:window", 1)).hasSize(1);
+        assertThat(investigations.evidence("VELOCITY:window", 1).items()).hasSize(1);
         mongo.insert(new Document("_id", "HIGH_VALUE:at-start").append("transactionId", "at-start"), "alerts");
-        assertThat(investigations.evidence("HIGH_VALUE:at-start", 200)).extracting(view -> view.transactionId()).containsExactly("at-start");
+        assertThat(investigations.evidence("HIGH_VALUE:at-start", 200).items()).extracting(view -> view.transactionId()).containsExactly("at-start");
     }
 
     @Test
@@ -189,12 +191,14 @@ class IngestionIT {
             originalHistory.add(new Document("status", "INVESTIGATING").append("note", "Existing note " + index)
                     .append("analyst", "initial-analyst").append("reviewedAt", new Date()));
         }
-        mongo.insert(new Document("_id", "history-cap").append("status", "INVESTIGATING").append("reviewHistory", originalHistory), "alerts");
+        mongo.insert(new Document("_id", "history-cap").append("status", "INVESTIGATING").append("owner", "initial-analyst")
+                .append("createdAt", new Date()).append("reviewHistory", originalHistory), "alerts");
         var executor = Executors.newFixedThreadPool(8);
         try {
             var attempts = java.util.stream.IntStream.range(0, 8).mapToObj(index -> CompletableFuture.supplyAsync(() -> {
                 try {
-                    investigations.review("history-cap", InvestigationService.ReviewStatus.RESOLVED, "Concurrent note " + index, "analyst-" + index);
+                    investigations.review("history-cap", new ReviewCommand(ReviewAction.COMMENT, 0L,
+                            "capacity-" + index, "Concurrent note " + index, "initial-analyst", null));
                     return 200;
                 } catch (ResponseStatusException exception) {
                     return exception.getStatusCode().value();
@@ -214,6 +218,98 @@ class IngestionIT {
         assertThat(history.get(499).get("note").toString()).startsWith("Concurrent note ");
         assertThat((List<?>) investigations.detail("history-cap", 50).get("reviewHistory")).hasSize(50);
         assertThat(investigations.alerts(50, null, null).get(0)).doesNotContainKey("reviewHistory");
+        rejects(409, () -> investigations.review("history-cap", new ReviewCommand(ReviewAction.COMMENT, 1L,
+                "capacity-overflow", "This must not erase the audit", "initial-analyst", null)));
+    }
+
+    @Test
+    void concurrentClaimHasSingleOwnerAndConcurrentRetryAddsOnlyOneHistoryEntry() {
+        mongo.insert(new Document("_id", "claim-race").append("status", "OPEN"), "alerts");
+        var executor = Executors.newFixedThreadPool(8);
+        try {
+            var attempts = java.util.stream.IntStream.range(0, 8).mapToObj(index -> CompletableFuture.supplyAsync(() -> {
+                try {
+                    investigations.review("claim-race", new ReviewCommand(ReviewAction.CLAIM, 0L, "claim-op-" + index,
+                            "Investigate payment burst", "analyst-" + index, null));
+                    return 200;
+                } catch (ResponseStatusException error) { return error.getStatusCode().value(); }
+            }, executor)).toList();
+            assertThat(attempts.stream().map(CompletableFuture::join).toList())
+                    .containsOnly(200, 409).filteredOn(code -> code == 200).hasSize(1);
+            var claimed = investigations.detail("claim-race", 50);
+            assertThat(claimed).containsEntry("version", 1L).containsEntry("reviewHistoryCount", 1);
+            String owner = claimed.get("owner").toString();
+            ReviewCommand comment = new ReviewCommand(ReviewAction.COMMENT, 1L, "comment-retry", "Reviewed evidence", owner, null);
+            var retries = java.util.stream.IntStream.range(0, 8)
+                    .mapToObj(index -> CompletableFuture.supplyAsync(() -> investigations.review("claim-race", comment), executor)).toList();
+            retries.forEach(CompletableFuture::join);
+            assertThat(investigations.detail("claim-race", 50)).containsEntry("version", 2L).containsEntry("reviewHistoryCount", 2);
+            rejects(409, () -> investigations.review("claim-race", new ReviewCommand(ReviewAction.COMMENT, 1L,
+                    "comment-retry", "Changed retry payload", owner, null)));
+        } finally { executor.shutdownNow(); }
+    }
+
+    @Test
+    void resolutionAndReopeningAdjustOutcomeCountsWithoutLosingHistoryOrRetrySafety() {
+        mongo.insert(new Document("_id", "outcome-case").append("rule", "HIGH_VALUE"), "alerts");
+        mongo.insert(new Document("_id", "legacy-resolved").append("rule", "HIGH_VALUE").append("status", "RESOLVED"), "alerts");
+        ReviewCommand claim = new ReviewCommand(ReviewAction.CLAIM, 0L, "claim-outcome", "Review payment", "alice", null);
+        investigations.review("outcome-case", claim);
+        rejects(409, () -> investigations.review("outcome-case", new ReviewCommand(ReviewAction.RESOLVE, 1L,
+                "wrong-owner", "Looks risky", "bob", Disposition.CONFIRMED_RISK)));
+        ReviewCommand resolve = new ReviewCommand(ReviewAction.RESOLVE, 1L, "resolve-outcome", "Confirmed test pattern", "alice", Disposition.CONFIRMED_RISK);
+        investigations.review("outcome-case", resolve);
+        var outcomes = investigations.outcomes();
+        assertThat(outcomes.resolvedAlerts()).isEqualTo(2);
+        assertThat(outcomes.byRule()).containsExactly(new RuleOutcome("HIGH_VALUE", 2, 1, 0, 0, 1));
+        // A delayed response/retry of the earlier claim must not revert the resolution.
+        assertThat(investigations.review("outcome-case", claim)).containsEntry("version", 2L).containsEntry("status", "RESOLVED");
+        investigations.review("outcome-case", new ReviewCommand(ReviewAction.REOPEN, 2L, "reopen-outcome", "New evidence arrived", "bob", null));
+        var reopened = investigations.review("outcome-case", resolve);
+        assertThat(reopened).containsEntry("version", 3L).containsEntry("owner", "bob").containsEntry("reviewHistoryCount", 3)
+                .doesNotContainKeys("disposition", "resolvedAt");
+        assertThat(investigations.outcomes().byRule()).containsExactly(new RuleOutcome("HIGH_VALUE", 1, 0, 0, 0, 1));
+        investigations.review("outcome-case", new ReviewCommand(ReviewAction.RELEASE, 3L, "release-outcome", "Hand back to queue", "bob", null));
+        assertThat(investigations.detail("outcome-case", 50)).containsEntry("status", "OPEN").doesNotContainKey("owner");
+    }
+
+    @Test
+    void pinnedDetectionEvidenceExcludesLaterMatchingEventsAndReportsMissingLedger() {
+        Instant time = clock.instant().minusSeconds(1);
+        service.accept(evidencePayload("small-1", "acct-evidence", TransactionPayload.Currency.CAD, time));
+        service.accept(evidencePayload("later-same-window", "acct-evidence", TransactionPayload.Currency.CAD, time));
+        mongo.insert(new Document("_id", "pinned").append("evidenceVersion", 1).append("evidenceCount", 3L)
+                .append("evidenceTransactionIds", List.of("small-1", "kafka-only")).append("evidenceTruncated", true), "alerts");
+        var evidence = investigations.evidence("pinned", 200);
+        assertThat(evidence.items()).extracting(view -> view.transactionId()).containsExactly("small-1");
+        assertThat(evidence.missingCount()).isEqualTo(1);
+        assertThat(evidence.matchedCount()).isEqualTo(1);
+        assertThat(evidence.evidenceCount()).isEqualTo(3);
+        assertThat(evidence.complete()).isFalse();
+        assertThat(evidence.truncated()).isTrue();
+    }
+
+    @Test
+    void queuePaginationReachesOldAlertsPastTwoHundredWithEqualTimestamps() {
+        Date created = Date.from(clock.instant());
+        for (int index = 0; index < 205; index++) mongo.insert(new Document("_id", "queue-" + String.format("%03d", index))
+                .append("createdAt", created).append("status", "INVESTIGATING").append("owner", "alice"), "alerts");
+        var first = investigations.alertPage(200, null, null, ReviewStatus.INVESTIGATING, "alice", null);
+        var second = investigations.alertPage(200, null, null, ReviewStatus.INVESTIGATING, "alice", first.nextCursor());
+        assertThat(first.items()).hasSize(200);
+        assertThat(second.items()).hasSize(5);
+        assertThat(second.nextCursor()).isNull();
+        var ids = new ArrayList<String>();
+        first.items().forEach(item -> ids.add(item.get("id").toString()));
+        second.items().forEach(item -> ids.add(item.get("id").toString()));
+        assertThat(ids).doesNotHaveDuplicates().hasSize(205);
+        assertThat(ids.get(204)).isEqualTo("queue-000");
+        assertThat(investigations.alertPage(200, null, null, null, "bob", null).items()).isEmpty();
+    }
+
+    private void rejects(int status, org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(status));
     }
 
     private TransactionPayload evidencePayload(String id, String account, TransactionPayload.Currency currency, Instant eventTime) {

@@ -11,40 +11,53 @@ import java.util.List;
 public final class RiskRules {
     public static final long HIGH_VALUE_THRESHOLD = 500_000;
     public static final long VELOCITY_THRESHOLD = 5;
+    public static final int MAX_EVIDENCE_TRANSACTIONS = 200;
 
     private RiskRules() {}
 
     public static List<Document> eventAlerts(TransactionEvent event, Instant observedAt) {
         if (event.amountMinor() < HIGH_VALUE_THRESHOLD) return List.of();
-        return List.of(base("HIGH_VALUE:" + event.transactionId(), "HIGH_VALUE", "HIGH", 90,
+        return List.of(withEvidence(base("HIGH_VALUE:" + event.transactionId(), "HIGH_VALUE", "HIGH", 90,
                 event.accountId(), event.currency(), event.eventTime(), observedAt)
                 .append("transactionId", event.transactionId())
                 .append("amountMinor", event.amountMinor())
-                .append("reasons", List.of("Amount is at least 500000 minor units (5000 currency units)")));
+                .append("reasons", List.of("Amount is at least 500000 minor units (5000 currency units)")),
+                List.of(event.transactionId()), 1));
     }
 
     public static List<Document> windowAlerts(WindowSnapshot snapshot, Instant observedAt) {
         List<Document> alerts = new ArrayList<>();
         if (snapshot.transactionCount() >= VELOCITY_THRESHOLD) {
             alerts.add(windowAlert(snapshot, observedAt, "VELOCITY", "MEDIUM", 75,
-                    "At least 5 distinct transactions for one account and currency within a UTC minute"));
+                    "At least 5 distinct transactions for one account and currency within a UTC minute",
+                    snapshot.transactionIds(), snapshot.transactionCount()));
         }
         if (snapshot.smallAmountCount() >= VELOCITY_THRESHOLD) {
             alerts.add(windowAlert(snapshot, observedAt, "CARD_TESTING", "HIGH", 85,
-                    "At least 5 distinct transactions of at most 1000 minor units within a UTC minute"));
+                    "At least 5 distinct transactions of at most 1000 minor units within a UTC minute",
+                    snapshot.smallAmountTransactionIds(), snapshot.smallAmountCount()));
         }
         return alerts;
     }
 
     private static Document windowAlert(WindowSnapshot snapshot, Instant observedAt, String rule,
-                                        String severity, int score, String reason) {
-        return base(rule + ":" + snapshot.id(), rule, severity, score, snapshot.accountId(),
+                                        String severity, int score, String reason,
+                                        List<String> evidenceIds, long evidenceCount) {
+        return withEvidence(base(rule + ":" + snapshot.id(), rule, severity, score, snapshot.accountId(),
                 snapshot.currency(), snapshot.windowEnd(), observedAt)
                 .append("windowStart", Date.from(snapshot.windowStart()))
                 .append("windowEnd", Date.from(snapshot.windowEnd()))
                 .append("transactionCount", snapshot.transactionCount())
                 .append("totalAmountMinor", snapshot.totalAmountMinor())
-                .append("reasons", List.of(reason));
+                .append("reasons", List.of(reason)), evidenceIds, evidenceCount);
+    }
+
+    private static Document withEvidence(Document alert, List<String> ids, long count) {
+        List<String> pinned = ids.stream().distinct().sorted().limit(MAX_EVIDENCE_TRANSACTIONS).toList();
+        // This metadata is inserted with the alert once. A later window update or replay must
+        // not silently substitute new evidence after an analyst has made a decision.
+        return alert.append("evidenceVersion", 1).append("evidenceTransactionIds", pinned)
+                .append("evidenceCount", count).append("evidenceTruncated", count > pinned.size());
     }
 
     private static Document base(String id, String rule, String severity, int score,
