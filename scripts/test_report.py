@@ -377,6 +377,21 @@ class Report:
                       f"Preserved audit actions after reopen and resolution: **{data.get('auditActions')}**."]
         self.sections.append("\n".join(lines))
 
+    def live_review(self):
+        _, data = self.json_file("live-review.json")
+        lines = ["## Live browser investigation", ""]
+        if data:
+            checks = ["apiPersistenceChecked", "evidenceRendered", "outcomeRendered"]
+            if data.get("status") != "passed" or any(data.get(check) is not True for check in checks):
+                self.issue("Live browser review did not verify every UI/API/persistence boundary.")
+            if data.get("auditActions") != ["CLAIM", "RESOLVE"]:
+                self.issue("Live browser review lacks the persisted claim and resolution audit actions.")
+            lines += ["The browser claimed and resolved a real pipeline-generated alert. "
+                      "The API was read back to verify persisted versions, actions and the resolution outcome.", "",
+                      f"Alert: `{markdown(data.get('alertId'))}`; claim version: **{data.get('claimVersion')}**, "
+                      f"resolved version: **{data.get('resolvedVersion')}**."]
+        self.sections.append("\n".join(lines))
+
     def coverage(self):
         paths = self.files("jacoco.xml")
         modules = set()
@@ -444,6 +459,7 @@ class Report:
         self.e2e()
         self.e2e(kubernetes=True)
         self.analyst_workflow()
+        self.live_review()
         self.load()
         self.k6()
         self.dashboard()

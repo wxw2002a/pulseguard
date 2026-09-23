@@ -4,7 +4,8 @@ These statements describe implemented behavior. Attach the verification report f
 
 ## 中文简历
 
-**PulseGuard｜支付风险流式分析与协作调查平台**  
+**PulseGuard｜支付风险流式分析与协作调查平台**
+
 Java 17 / Spring Boot / Kafka / Spark Structured Streaming / MongoDB / Kubernetes
 
 - 设计支付事件接入与风险调查闭环，通过不可变交易 ID、MongoDB 内嵌 Outbox、租约重试及幂等投影，处理重复回调、消息重放和服务恢复。
