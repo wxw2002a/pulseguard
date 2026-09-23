@@ -4,7 +4,7 @@
 
 **Real-time transaction risk analytics. Built to explain every signal and survive replay.**
 
-[中文说明](README.zh-CN.md) · [Business case and five-minute walkthrough](docs/analyst-workflow.md) · [Resume and interview notes](docs/resume.md)
+[Business case and five-minute walkthrough](docs/analyst-workflow.md)
 
 [![verify](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/ci.yml)
 [![Kubernetes](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml/badge.svg)](https://github.com/wxw2002a/pulseguard/actions/workflows/kubernetes.yml)
